@@ -3,34 +3,325 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>高等数学五章复习网站</title>
+    <title>高等数学复习网站入口</title>
     <meta
       name="description"
-      content="基于 Chapter 10-14 五章 PPT 重构的高等数学复习网站，包含分章导读、知识点整理、SVG 图解和交互实验。"
+      content="同一站点同时保留新版文档型高数复习网站与原版页面，支持从入口页分别进入两个版本。"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f4ef;
+        --surface: rgba(255, 255, 255, 0.9);
+        --surface-strong: #ffffff;
+        --text: #171717;
+        --muted: #5f5a52;
+        --line: rgba(30, 28, 24, 0.12);
+        --accent: #1f5f63;
+        --accent-soft: rgba(31, 95, 99, 0.1);
+        --shadow: 0 28px 60px rgba(21, 24, 24, 0.08);
+        --radius: 28px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(31, 95, 99, 0.1), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(196, 173, 120, 0.14), transparent 28%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          "SF Pro Display",
+          "PingFang SC",
+          "Helvetica Neue",
+          "Hiragino Sans GB",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+
+      body {
+        padding: 40px 24px 56px;
+      }
+
+      .shell {
+        width: min(1120px, 100%);
+        margin: 0 auto;
+        display: grid;
+        gap: 28px;
+      }
+
+      .hero,
+      .version-card,
+      .link-strip {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .hero {
+        padding: 44px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--accent);
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2.6rem, 6vw, 4.8rem);
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 1.08rem;
+        line-height: 1.85;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding-top: 6px;
+      }
+
+      .meta-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 0 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.66);
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .version-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 22px;
+      }
+
+      .version-card {
+        padding: 30px;
+        display: grid;
+        gap: 20px;
+      }
+
+      .version-card--new {
+        background:
+          linear-gradient(180deg, rgba(31, 95, 99, 0.05), transparent 28%),
+          var(--surface-strong);
+      }
+
+      .version-card--classic {
+        background:
+          linear-gradient(180deg, rgba(163, 136, 83, 0.08), transparent 28%),
+          var(--surface-strong);
+      }
+
+      .version-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 30px;
+        width: fit-content;
+        padding: 0 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+
+      .version-card--classic .version-badge {
+        background: rgba(163, 136, 83, 0.14);
+        color: #836332;
+      }
+
+      .version-card p {
+        color: var(--muted);
+        line-height: 1.8;
+        font-size: 1rem;
+      }
+
+      .feature-list {
+        margin: 0;
+        padding-left: 1.1rem;
+        color: var(--muted);
+        display: grid;
+        gap: 10px;
+        line-height: 1.7;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding-top: 4px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        padding: 0 18px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        text-decoration: none;
+        font-weight: 600;
+        transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+      }
+
+      .button--primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .button--secondary {
+        border-color: var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--text);
+      }
+
+      .link-strip {
+        padding: 22px 26px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .link-strip__row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 18px;
+      }
+
+      .link-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--text);
+        text-decoration: none;
+        font-size: 0.95rem;
+      }
+
+      .link-chip span {
+        color: var(--muted);
+        margin-right: 8px;
+      }
+
+      @media (max-width: 860px) {
+        body {
+          padding: 22px 16px 40px;
+        }
+
+        .hero,
+        .version-card,
+        .link-strip {
+          border-radius: 22px;
+        }
+
+        .hero {
+          padding: 30px 24px;
+        }
+
+        .version-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
   </head>
   <body>
-    <a class="skip-link" href="#app">跳到正文</a>
-    <div class="site-frame">
-      <header class="site-header" id="siteHeader">
-        <div class="site-header__inner">
-          <div class="site-header__brand">
-            <span class="site-header__mark">∫</span>
-            <div>
-              <p class="site-header__eyebrow">Advanced Mathematics Review</p>
-              <h1>高等数学五章复习网站</h1>
-            </div>
-          </div>
-          <p class="site-header__summary">
-            围绕第 10 至 14 章重新整理知识结构，按章节分页阅读，图解与实验单独分层展示。
-          </p>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Advanced Mathematics Review Hub</p>
+        <h1>高等数学复习网站</h1>
+        <p>
+          当前仓库同时保留两套页面：新版是文档型双栏复习站，适合按章节树和知识点目录系统复习；原版保留最初的整站结构，方便对照旧版本内容与排版。
+        </p>
+        <div class="hero-meta">
+          <span class="meta-chip">Chapter 10-14</span>
+          <span class="meta-chip">SVG 图解</span>
+          <span class="meta-chip">交互实验与 3D 视图</span>
+          <span class="meta-chip">双版本并存</span>
         </div>
-      </header>
-      <main id="app" class="app-root" aria-live="polite"></main>
-    </div>
-    <noscript>这个复习网站需要启用 JavaScript 才能显示交互图形与动画。</noscript>
-    <script src="./content.js"></script>
-    <script src="./app.js"></script>
+      </section>
+
+      <section class="version-grid" aria-label="版本入口">
+        <article class="version-card version-card--new">
+          <span class="version-badge">New Version</span>
+          <div>
+            <h2>新版文档站</h2>
+            <p>当前重构版，重点是文档式阅读流、双侧目录定位和更清晰的知识层级。</p>
+          </div>
+          <ul class="feature-list">
+            <li>左侧是章节与小分节，右侧是当前页知识点目录。</li>
+            <li>目录支持实时高亮、滚动联动和分组折叠。</li>
+            <li>保留交互实验、SVG 图解和按钮式缩放。</li>
+          </ul>
+          <div class="actions">
+            <a class="button button--primary" href="./new/index.html">打开新版</a>
+            <a class="button button--secondary" href="./new/index.html#chapter-10">从第 10 章进入</a>
+          </div>
+        </article>
+
+        <article class="version-card version-card--classic">
+          <span class="version-badge">Classic Version</span>
+          <div>
+            <h2>原版页面</h2>
+            <p>保留仓库原先版本，适合与新版对照查看结构、视觉和内容组织上的差异。</p>
+          </div>
+          <ul class="feature-list">
+            <li>使用原有的页面布局与导航方式。</li>
+            <li>内容来源与同一套 PPT 数据保持一致。</li>
+            <li>适合做新旧方案对照和回看最初版本。</li>
+          </ul>
+          <div class="actions">
+            <a class="button button--primary" href="./classic/index.html">打开原版</a>
+            <a class="button button--secondary" href="./classic/index.html#chapter-10">从第 10 章进入</a>
+          </div>
+        </article>
+      </section>
+
+      <section class="link-strip">
+        <p class="eyebrow">Direct Links</p>
+        <div class="link-strip__row">
+          <a class="link-chip" href="./new/index.html"><span>新版</span>./new/index.html</a>
+          <a class="link-chip" href="./classic/index.html"><span>原版</span>./classic/index.html</a>
+        </div>
+      </section>
+    </main>
   </body>
 </html>

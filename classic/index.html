@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高等数学五章复习网站</title>
+    <meta
+      name="description"
+      content="基于 Chapter 10-14 五章 PPT 重构的高等数学复习网站，包含分章导读、知识点整理、SVG 图解和交互实验。"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">跳到正文</a>
+    <div class="site-frame">
+      <header class="site-header" id="siteHeader">
+        <div class="site-header__inner">
+          <div class="site-header__brand">
+            <span class="site-header__mark">∫</span>
+            <div>
+              <p class="site-header__eyebrow">Advanced Mathematics Review</p>
+              <h1>高等数学五章复习网站</h1>
+            </div>
+          </div>
+          <p class="site-header__summary">
+            围绕第 10 至 14 章重新整理知识结构，按章节分页阅读，图解与实验单独分层展示。
+          </p>
+        </div>
+      </header>
+      <main id="app" class="app-root" aria-live="polite"></main>
+    </div>
+    <noscript>这个复习网站需要启用 JavaScript 才能显示交互图形与动画。</noscript>
+    <script src="./content.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -7,8 +7,22 @@ const html = String.raw;
 const totalSections = reviewData.reduce((sum, chapter) => sum + chapter.sections.length, 0);
 const totalFormulas = reviewData.reduce((sum, chapter) => sum + chapter.formulaWall.length, 0);
 const totalDemos = reviewData.reduce((sum, chapter) => sum + chapter.demos.length, 0);
-let releaseScrollSpy = null;
-const tocGroupState = new Set();
+const railStorageKey = "advanced-math-review-rail-collapsed";
+let isRailCollapsed = readRailState();
+
+function readRailState() {
+  try {
+    return globalThis.localStorage?.getItem(railStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeRailState(value) {
+  try {
+    globalThis.localStorage?.setItem(railStorageKey, value ? "1" : "0");
+  } catch {}
+}
 
 function stripMarkup(text) {
   return String(text)
@@ -52,10 +66,6 @@ function getCurrentRoute() {
     return { view: "home", chapter: null, topicAnchor: "" };
   }
 
-  if (rawHash.startsWith("home-")) {
-    return { view: "home", chapter: null, topicAnchor: rawHash };
-  }
-
   const chapter = reviewData.find((item) => rawHash === item.id || rawHash.startsWith(`${item.id}-`));
   if (!chapter) {
     return { view: "home", chapter: null, topicAnchor: "" };
@@ -74,18 +84,6 @@ function getChapterIndex(chapterId) {
 
 function getTopicAnchor(chapterId, topic) {
   return `${chapterId}-${topic.code.replace(/\./g, "-")}`;
-}
-
-function getOverviewAnchor(chapterId, part) {
-  return `${chapterId}-overview-${part}`;
-}
-
-function getFormulaAnchor(chapterId, index) {
-  return `${chapterId}-formulas-${index + 1}`;
-}
-
-function getDemoAnchor(chapterId, index) {
-  return `${chapterId}-lab-${index + 1}`;
 }
 
 function getTopicSearchText(topic) {
@@ -118,123 +116,86 @@ function getChapterSearchText(chapter) {
     .toLowerCase();
 }
 
-function getPageAnchors(chapter) {
-  if (!chapter) {
-    return [
-      { id: "home-intro", label: "站点概览", kind: "section" },
-      { id: "home-guide", label: "复习方式", kind: "section" },
-      { id: "home-library", label: "章节目录", kind: "section" },
-    ];
-  }
-
-  return [
-    {
-      id: `${chapter.id}-overview`,
-      label: "章节概览",
-      kind: "section",
-      children: [
-        { id: getOverviewAnchor(chapter.id, "goals"), label: "本章目标" },
-        { id: getOverviewAnchor(chapter.id, "path"), label: "推荐复习顺序" },
-      ],
-    },
-    ...chapter.sections.map((topic) => ({
-      id: getTopicAnchor(chapter.id, topic),
-      label: `${topic.code} ${topic.titleCn}`,
-      kind: "topic",
-      children: [
-        { id: `${getTopicAnchor(chapter.id, topic)}-must-know`, label: "必须理解" },
-        { id: `${getTopicAnchor(chapter.id, topic)}-formulas`, label: "关键公式" },
-        { id: `${getTopicAnchor(chapter.id, topic)}-workflow`, label: "题路步骤" },
-        { id: `${getTopicAnchor(chapter.id, topic)}-pitfalls`, label: "易错提醒" },
-      ],
-    })),
-    { id: `${chapter.id}-diagram`, label: "章节图解", kind: "section", children: [] },
-    {
-      id: `${chapter.id}-formulas`,
-      label: "公式骨架",
-      kind: "section",
-      children: chapter.formulaWall.map((item, index) => ({
-        id: getFormulaAnchor(chapter.id, index),
-        label: item.label,
-      })),
-    },
-    {
-      id: `${chapter.id}-lab`,
-      label: "交互实验",
-      kind: "section",
-      children: chapter.demos.map((demo, index) => ({
-        id: getDemoAnchor(chapter.id, index),
-        label: demo.title,
-      })),
-    },
-    { id: `${chapter.id}-check`, label: "章末自测", kind: "section", children: [] },
-  ];
-}
-
-function getSearchPlaceholder(route) {
-  return route.view === "chapter" ? "搜索当前章节中的知识点..." : "搜索章节、小节或知识点...";
-}
-
-function renderTopBar(route) {
-  return html`
-    <header class="site-header">
-      <div class="site-header__main">
-        <a class="site-header__brand" href="#home" aria-label="返回高等数学五章复习网站首页">
-          <span class="site-header__mark">∫</span>
-          <strong>${siteMeta.title}</strong>
-        </a>
-        <label class="site-search" for="searchInput">
-          <span class="site-search__icon">⌕</span>
-          <input id="searchInput" type="search" placeholder="${getSearchPlaceholder(route)}" />
-          <span class="site-search__hint">⌘K</span>
-        </label>
-        <nav class="site-header__links" aria-label="站点操作">
-          <a href="https://github.com/muyenan/Review-of-Advanced-Mathematic" target="_blank" rel="noreferrer">GitHub</a>
-        </nav>
-      </div>
-    </header>
-  `;
-}
-
-function renderNavTopicLink(route, chapter, topic) {
-  const topicAnchor = getTopicAnchor(chapter.id, topic);
-  const isActive = route.topicAnchor.startsWith(topicAnchor);
-  return html`
-    <a href="#${topicAnchor}" class="nav-topic-link ${isActive ? "is-active" : ""}" data-target="${topicAnchor}">
-      <span>${topic.code}</span>
-      <strong>${topic.titleCn}</strong>
-    </a>
-  `;
-}
-
 function renderPrimaryNav(route) {
   return html`
-    <nav class="sidebar-tree" aria-label="章节导航">
-      ${reviewData
-        .map((chapter) => {
-          const chapterActive = route.chapter?.id === chapter.id;
-          return html`
-            <section class="sidebar-group">
-              <a href="#${chapter.id}" class="sidebar-group__title ${chapterActive ? "is-active" : ""}">
-                <span>Chapter ${chapter.chapterNumber}</span>
+    <section class="rail-card rail-card--nav">
+      <p class="rail-label">Site Navigation</p>
+      <nav class="primary-nav" aria-label="章节导航">
+        <a href="#home" class="primary-nav__item ${route.view === "home" ? "is-active" : ""}">
+          <span>总览</span>
+          <strong>五章结构</strong>
+        </a>
+        ${reviewData
+          .map(
+            (chapter) => html`
+              <a href="#${chapter.id}" class="primary-nav__item ${route.chapter?.id === chapter.id ? "is-active" : ""}">
+                <span>${chapter.shortLabel}</span>
                 <strong>${chapter.titleCn}</strong>
               </a>
-              <div class="sidebar-group__topics">
-                ${chapter.sections.map((topic) => renderNavTopicLink(route, chapter, topic)).join("")}
-              </div>
-            </section>
-          `;
-        })
-        .join("")}
-    </nav>
+            `
+          )
+          .join("")}
+      </nav>
+    </section>
   `;
 }
 
-function renderSidebar(route) {
+function renderStudyHints() {
   return html`
-    <aside class="docs-sidebar" id="siteRail">
-      ${renderPrimaryNav(route)}
-    </aside>
+    <section class="rail-card">
+      <p class="rail-label">Study Method</p>
+      <h2>使用方式</h2>
+      <ul class="bullet-list compact-list">
+        ${siteMeta.studyHints.map((hint) => `<li>${formatRichText(hint)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderRailToggle() {
+  return html`
+    <button
+      class="ghost-button rail-toggle ${isRailCollapsed ? "is-collapsed" : ""}"
+      type="button"
+      data-role="rail-toggle"
+      aria-label="${isRailCollapsed ? "展开侧边栏" : "收起侧边栏"}"
+      aria-expanded="${String(!isRailCollapsed)}"
+      aria-controls="siteRail"
+    >
+      ${isRailCollapsed ? "展开" : "收起"}
+    </button>
+  `;
+}
+
+function renderHomeSearch() {
+  return html`
+    <section class="search-panel">
+      <div>
+        <p class="section-kicker">Search</p>
+        <h3>按章节检索</h3>
+      </div>
+      <label class="search-field" for="searchInput">
+        <span>章节名、公式主题或关键概念</span>
+        <input id="searchInput" type="search" placeholder="例如：Taylor、极坐标、梯度、空间曲线" />
+      </label>
+    </section>
+    <p id="searchEmpty" class="search-empty is-hidden">没有匹配的章节，换一个关键词试试。</p>
+  `;
+}
+
+function renderChapterSearch() {
+  return html`
+    <section class="search-panel">
+      <div>
+        <p class="section-kicker">Search</p>
+        <h3>按知识点检索</h3>
+      </div>
+      <label class="search-field" for="searchInput">
+        <span>当前章节内快速定位</span>
+        <input id="searchInput" type="search" placeholder="例如：绝对收敛、偏心率、切平面、曲率" />
+      </label>
+    </section>
+    <p id="searchEmpty" class="search-empty is-hidden">本章没有匹配的知识点，换一个关键词试试。</p>
   `;
 }
 
@@ -247,63 +208,67 @@ function renderHomeChapterCard(chapter) {
           <h3>${chapter.titleCn}</h3>
           <p>${chapter.titleEn}</p>
         </div>
-        <a class="ghost-button" href="#${chapter.id}">打开章节</a>
+        <span class="chapter-entry__badge">${chapter.sections.length} 节</span>
       </header>
       <p class="chapter-entry__lead">${formatRichText(chapter.goals[0])}</p>
-      <div class="chapter-entry__body">
-        <section class="chapter-entry__block">
-          <h4>小节</h4>
+      <div class="chapter-entry__grid">
+        <section>
+          <h4>本章抓手</h4>
           <ul class="bullet-list compact-list">
-            ${chapter.sections.map((topic) => `<li>${topic.code} ${topic.titleCn}</li>`).join("")}
+            ${chapter.goals.map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
           </ul>
         </section>
-        <section class="chapter-entry__block">
-          <h4>本章重点</h4>
-          <ul class="bullet-list compact-list">
-            ${chapter.goals.slice(0, 3).map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
-          </ul>
+        <section>
+          <h4>小节目录</h4>
+          <ol class="outline-list">
+            ${chapter.sections
+              .map((topic) => `<li><span>${topic.code}</span><strong>${topic.titleCn}</strong><p>${formatRichText(topic.focus)}</p></li>`)
+              .join("")}
+          </ol>
         </section>
       </div>
+      <footer class="chapter-entry__footer">
+        <div class="stat-grid">
+          <div class="stat-chip"><strong>${chapter.formulaWall.length}</strong><span>公式</span></div>
+          <div class="stat-chip"><strong>${chapter.demos.length}</strong><span>实验</span></div>
+          <div class="stat-chip"><strong>${chapter.examChecklist.length}</strong><span>自测题</span></div>
+        </div>
+        <a class="accent-button" href="#${chapter.id}">进入本章</a>
+      </footer>
     </article>
   `;
 }
 
 function renderHomePage() {
   return html`
-    <article class="doc-page home-page">
-      <header class="doc-header" id="home-intro">
-        <p class="doc-header__eyebrow">Advanced Mathematics Documentation</p>
-        <h1>${siteMeta.title}</h1>
-        <p class="doc-header__lead">${siteMeta.subtitle}</p>
-      </header>
-
-      <section class="doc-section" id="home-guide">
-        <div class="doc-section__header">
-          <div>
-            <p class="section-kicker">How To Use</p>
-            <h2>先按章节树进入，再按知识点细读</h2>
-          </div>
+    <section class="landing-hero">
+      <div class="landing-hero__copy">
+        <p class="eyebrow">Chapter 10-14 · Structured Review</p>
+        <h2>先建立地图，再进入单章深读</h2>
+        <p class="landing-hero__text">
+          这次不再把五章内容堆成同一种卡片流，而是先给总览，再进入单章正文。每章内部按导读、路线、公式、知识点、实验、自测六层展开。
+        </p>
+      </div>
+      <div class="landing-hero__metrics">
+        <article class="metric-card"><strong>${reviewData.length}</strong><span>章节</span></article>
+        <article class="metric-card"><strong>${totalSections}</strong><span>知识小节</span></article>
+        <article class="metric-card"><strong>${totalFormulas}</strong><span>核心公式</span></article>
+        <article class="metric-card"><strong>${totalDemos}</strong><span>交互实验</span></article>
+      </div>
+    </section>
+    ${renderHomeSearch()}
+    <section class="home-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Chapter Library</p>
+          <h3>五章总览</h3>
         </div>
-        <div class="doc-copy">
-          <p>左侧目录负责章节与小节跳转，右侧目录负责当前正文内部的知识点跳转。中间正文保持完整复习内容、SVG 图解和交互实验。</p>
-          <ul class="bullet-list">
-            ${siteMeta.studyHints.map((hint) => `<li>${formatRichText(hint)}</li>`).join("")}
-          </ul>
-        </div>
-      </section>
-
-      <section class="doc-section" id="home-library">
-        <div class="doc-section__header">
-          <div>
-            <p class="section-kicker">Chapters</p>
-            <h2>五章目录</h2>
-          </div>
-        </div>
-        <div class="chapter-library">
-          ${reviewData.map(renderHomeChapterCard).join("")}
-        </div>
-      </section>
-    </article>
+        <p>每张卡片都先告诉你这章的核心任务，再列出章节目录，方便你判断先复习哪一部分。</p>
+      </div>
+      <div class="chapter-library">
+        ${reviewData.map(renderHomeChapterCard).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -314,102 +279,94 @@ function renderChapterPager(chapter) {
 
   return html`
     <nav class="chapter-pager" aria-label="章节翻页">
-      <a class="chapter-pager__link ${previous ? "" : "is-disabled"}" ${previous ? `href="#${previous.id}"` : ""}>
-        <span>上一章</span>
-        <strong>${previous ? previous.titleCn : "已经是第一章"}</strong>
-      </a>
-      <a class="chapter-pager__link" href="#home">
-        <span>返回</span>
-        <strong>五章总览</strong>
-      </a>
-      <a class="chapter-pager__link ${next ? "" : "is-disabled"}" ${next ? `href="#${next.id}"` : ""}>
-        <span>下一章</span>
-        <strong>${next ? next.titleCn : "已经是最后一章"}</strong>
-      </a>
+      <a class="ghost-button ${previous ? "" : "is-disabled"}" ${previous ? `href="#${previous.id}"` : ""}>${previous ? `上一章 · ${previous.titleCn}` : "已经是第一章"}</a>
+      <a class="ghost-button" href="#home">返回五章总览</a>
+      <a class="ghost-button ${next ? "" : "is-disabled"}" ${next ? `href="#${next.id}"` : ""}>${next ? `下一章 · ${next.titleCn}` : "已经是最后一章"}</a>
     </nav>
   `;
 }
 
-function renderPageAside(route) {
-  const pageAnchors = getPageAnchors(route.chapter);
-
+function renderChapterRail(chapter) {
   return html`
-    <aside class="docs-aside">
-      <div class="docs-aside__inner">
-        <p class="docs-aside__label">On this page</p>
-        <nav class="toc-nav" aria-label="本页目录">
-          ${pageAnchors
-            .map((item) => {
-              const isCurrent = route.topicAnchor && route.topicAnchor.startsWith(item.id);
-              const hasChildren = Boolean(item.children?.length);
-              const isOpen = hasChildren && (tocGroupState.has(item.id) || isCurrent);
-              return html`
-                <div class="toc-group ${hasChildren ? "is-collapsible" : ""} ${isOpen ? "is-open" : ""}" ${hasChildren ? `data-group="${item.id}"` : ""}>
-                  <div class="toc-row">
-                    <a class="toc-link toc-link--${item.kind} ${isCurrent ? "is-active" : ""}" href="#${item.id}" data-target="${item.id}">${item.label}</a>
-                    ${hasChildren
-                      ? html`
-                          <button
-                            class="toc-toggle"
-                            type="button"
-                            aria-label="切换 ${item.label} 目录"
-                            aria-expanded="${isOpen ? "true" : "false"}"
-                            aria-controls="${item.id}-children"
-                            data-group="${item.id}"
-                          >
-                            ${renderAccordionCaret()}
-                          </button>
-                        `
-                      : ""}
-                  </div>
-                  ${hasChildren
-                    ? html`
-                        <div class="toc-sublist" id="${item.id}-children">
-                          ${item.children
-                            .map(
-                              (child) => html`
-                                <a class="toc-sublink ${route.topicAnchor === child.id ? "is-active" : ""}" href="#${child.id}" data-target="${child.id}">
-                                  ${child.label}
-                                </a>
-                              `
-                            )
-                            .join("")}
-                        </div>
-                      `
-                    : ""}
-                </div>
-              `;
-            })
+    <aside class="chapter-rail">
+      <section class="rail-card rail-card--accent" style="--chapter-accent:${chapter.accent}">
+        <p class="rail-label">Chapter Focus</p>
+        <h2>${chapter.titleCn}</h2>
+        <p>${chapter.titleEn}</p>
+        <div class="stat-grid">
+          <div class="stat-chip"><strong>${chapter.sections.length}</strong><span>小节</span></div>
+          <div class="stat-chip"><strong>${chapter.formulaWall.length}</strong><span>公式</span></div>
+          <div class="stat-chip"><strong>${chapter.demos.length}</strong><span>实验</span></div>
+        </div>
+      </section>
+      <section class="rail-card">
+        <p class="rail-label">Section Index</p>
+        <nav class="chapter-index" aria-label="${chapter.titleCn}小节导航">
+          ${chapter.sections
+            .map(
+              (topic) => html`
+                <a href="#${getTopicAnchor(chapter.id, topic)}" class="chapter-index__item">
+                  <span>${topic.code}</span>
+                  <strong>${topic.titleCn}</strong>
+                </a>
+              `
+            )
             .join("")}
         </nav>
-      </div>
+      </section>
+      <section class="rail-card">
+        <p class="rail-label">Checklist</p>
+        <ul class="bullet-list compact-list">
+          ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+        </ul>
+      </section>
     </aside>
   `;
 }
 
-function renderAccordionCaret() {
-  return `
-    <svg class="accordion-caret" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M10.5 3.5L5.5 8L10.5 12.5" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
+function renderTopicOutline(chapter) {
+  return html`
+    <section class="content-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Outline</p>
+          <h3>本章知识目录</h3>
+        </div>
+        <p>先扫一遍每节到底在讲什么，再决定从哪一节开始精读。</p>
+      </div>
+      <div class="topic-outline-grid">
+        ${chapter.sections
+          .map(
+            (topic) => html`
+              <a class="topic-outline-card" href="#${getTopicAnchor(chapter.id, topic)}">
+                <span class="topic-outline-card__code">${topic.code}</span>
+                <strong>${topic.titleCn}</strong>
+                <p>${formatRichText(topic.focus)}</p>
+              </a>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
   `;
 }
 
 function renderFormulaWall(chapter) {
   return html`
-    <section class="doc-section" id="${chapter.id}-formulas">
-      <div class="doc-section__header">
+    <section class="content-section">
+      <div class="section-heading">
         <div>
           <p class="section-kicker">Formula Wall</p>
-          <h2>骨架公式</h2>
+          <h3>骨架公式</h3>
         </div>
+        <p>这一层只保留最常回忆的公式骨架，用来先搭结构，再回头做题。</p>
       </div>
       <div class="formula-grid">
         ${chapter.formulaWall
           .map(
-            (item, index) => html`
-              <article class="formula-card" id="${getFormulaAnchor(chapter.id, index)}">
-                <span class="formula-name">${item.label}</span>
+            (item) => html`
+              <article class="formula-card">
+                <span class="formula-label">${item.label}</span>
                 <div class="formula-body">${formatRichText(item.body)}</div>
               </article>
             `
@@ -429,7 +386,7 @@ function renderTopicArticle(topic, chapterId) {
         <div class="topic-article__title">
           <span class="topic-code">${topic.code}</span>
           <div>
-            <h2>${topic.titleCn}</h2>
+            <h3>${topic.titleCn}</h3>
             <p>${topic.titleEn}</p>
           </div>
         </div>
@@ -439,14 +396,14 @@ function renderTopicArticle(topic, chapterId) {
       </header>
       <p class="topic-focus">${formatRichText(topic.focus)}</p>
       <div class="topic-article__grid">
-        <section class="topic-block" id="${topicAnchor}-must-know">
-          <h3>必须理解</h3>
+        <section class="topic-block">
+          <h4>必须理解</h4>
           <ul class="bullet-list">
             ${topic.mustKnow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
           </ul>
         </section>
-        <section class="topic-block" id="${topicAnchor}-formulas">
-          <h3>关键公式</h3>
+        <section class="topic-block">
+          <h4>关键公式</h4>
           <div class="mini-formula-grid">
             ${topic.formulas
               .map(
@@ -460,14 +417,14 @@ function renderTopicArticle(topic, chapterId) {
               .join("")}
           </div>
         </section>
-        <section class="topic-block" id="${topicAnchor}-workflow">
-          <h3>题路步骤</h3>
+        <section class="topic-block">
+          <h4>题路步骤</h4>
           <ul class="bullet-list">
             ${topic.workflow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
           </ul>
         </section>
-        <section class="topic-block" id="${topicAnchor}-pitfalls">
-          <h3>易错提醒</h3>
+        <section class="topic-block">
+          <h4>易错提醒</h4>
           <ul class="bullet-list">
             ${topic.pitfalls.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
           </ul>
@@ -479,23 +436,24 @@ function renderTopicArticle(topic, chapterId) {
 
 function renderDemoStack(chapter) {
   return html`
-    <section class="doc-section" id="${chapter.id}-lab">
-      <div class="doc-section__header">
+    <section class="content-section">
+      <div class="section-heading">
         <div>
           <p class="section-kicker">Interactive Lab</p>
-          <h2>交互实验</h2>
+          <h3>交互实验</h3>
         </div>
+        <p>图像直觉、参数变化和空间视角统一放到这一层，不与定义解释混杂。</p>
       </div>
       <div class="demo-stack">
         ${chapter.demos
           .map(
-            (demo, index) => html`
-              <article class="demo-card" data-demo="${demo.id}" id="${getDemoAnchor(chapter.id, index)}">
-                <header class="demo-card-head">
-                  <h3>${demo.title}</h3>
-                </header>
-                <div class="demo-copy">
-                  <p>${demo.description}</p>
+            (demo) => html`
+              <article class="demo-card" data-demo="${demo.id}">
+                <div class="demo-card-head">
+                  <div>
+                    <h3>${demo.title}</h3>
+                    <p>${demo.description}</p>
+                  </div>
                 </div>
                 <div class="demo-card-body"></div>
               </article>
@@ -509,96 +467,113 @@ function renderDemoStack(chapter) {
 
 function renderChapterPage(chapter) {
   return html`
-    <article class="doc-page chapter-page" style="--chapter-accent:${chapter.accent}">
-      <header class="doc-header doc-header--chapter">
-        <p class="doc-header__eyebrow">About Chapter ${chapter.chapterNumber}</p>
-        <div class="doc-header__title-row">
-          <div>
-            <h1>${chapter.titleCn}</h1>
-            <p class="doc-header__subtitle">${chapter.titleEn}</p>
-          </div>
-          <button class="ghost-button" type="button" data-role="copy-link">复制本页链接</button>
+    <section class="chapter-page" style="--chapter-accent:${chapter.accent}">
+      <header class="chapter-hero">
+        <div class="chapter-hero__meta">
+          <a class="ghost-button" href="#home">返回五章总览</a>
+          <span class="route-chip">Chapter ${chapter.chapterNumber}</span>
         </div>
-        <div class="doc-copy">
-          <p>${formatRichText(chapter.goals[0])}</p>
-          <p>${formatRichText(chapter.studyPath[0])}</p>
+        <div class="chapter-hero__grid">
+          <div class="chapter-hero__copy">
+            <h2>${chapter.titleCn}</h2>
+            <p class="chapter-hero__en">${chapter.titleEn}</p>
+            <p class="chapter-hero__lead">${formatRichText(chapter.goals[0])}</p>
+          </div>
+          <div class="chapter-hero__cards">
+            <article class="hero-note-card">
+              <p class="rail-label">本章目标</p>
+              <ul class="bullet-list compact-list">
+                ${chapter.goals.map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
+              </ul>
+            </article>
+            <article class="hero-note-card">
+              <p class="rail-label">复习顺序</p>
+              <ol class="outline-list outline-list--steps">
+                ${chapter.studyPath.map((item) => `<li><p>${formatRichText(item)}</p></li>`).join("")}
+              </ol>
+            </article>
+          </div>
         </div>
       </header>
-
-      <section class="doc-section" id="${chapter.id}-overview">
-        <div class="doc-section__header">
-          <div>
-            <p class="section-kicker">Overview</p>
-            <h2>章节概览</h2>
-          </div>
-        </div>
-        <div class="overview-grid">
-          <section class="topic-block" id="${getOverviewAnchor(chapter.id, "goals")}">
-            <h3>本章目标</h3>
-            <ul class="bullet-list compact-list">
-              ${chapter.goals.map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
-            </ul>
+      ${renderChapterSearch()}
+      <div class="chapter-workspace">
+        ${renderChapterRail(chapter)}
+        <div class="chapter-reading">
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Diagram</p>
+                <h3>章节图解</h3>
+              </div>
+              <p>${formatRichText(chapter.diagram.subtitle)}</p>
+            </div>
+            <article class="diagram-card">
+              <div class="diagram-meta">
+                <h3>${chapter.diagram.title}</h3>
+                <p>${formatRichText(chapter.diagram.subtitle)}</p>
+              </div>
+              <div class="diagram-wrap">${chapter.diagram.svg}</div>
+            </article>
           </section>
-          <section class="topic-block" id="${getOverviewAnchor(chapter.id, "path")}">
-            <h3>推荐复习顺序</h3>
-            <ol class="outline-list outline-list--steps">
-              ${chapter.studyPath.map((item) => `<li><p>${formatRichText(item)}</p></li>`).join("")}
-            </ol>
+          ${renderTopicOutline(chapter)}
+          ${renderFormulaWall(chapter)}
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Knowledge Notes</p>
+                <h3>逐节整理</h3>
+              </div>
+              <p>每节固定成“理解点、公式、题路、易错”四栏，便于真正拿来复习，而不是浏览漂亮卡片。</p>
+            </div>
+            <div class="topic-stack">
+              ${chapter.sections.map((topic) => renderTopicArticle(topic, chapter.id)).join("")}
+            </div>
           </section>
+          ${renderDemoStack(chapter)}
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Self Check</p>
+                <h3>章末自测</h3>
+              </div>
+              <p>最后用最短的问题检查本章有没有真正打通。</p>
+            </div>
+            <article class="checklist-card">
+              <ul class="bullet-list">
+                ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+              </ul>
+            </article>
+          </section>
+          ${renderChapterPager(chapter)}
         </div>
-      </section>
-
-      ${chapter.sections.map((topic) => renderTopicArticle(topic, chapter.id)).join("")}
-
-      <section class="doc-section" id="${chapter.id}-diagram">
-        <div class="doc-section__header">
-          <div>
-            <p class="section-kicker">Diagram</p>
-            <h2>章节图解</h2>
-          </div>
-        </div>
-        <article class="diagram-card">
-          <div class="diagram-meta">
-            <h3>${chapter.diagram.title}</h3>
-            <p>${formatRichText(chapter.diagram.subtitle)}</p>
-          </div>
-          <div class="diagram-wrap">${chapter.diagram.svg}</div>
-        </article>
-      </section>
-
-      ${renderFormulaWall(chapter)}
-      ${renderDemoStack(chapter)}
-
-      <section class="doc-section" id="${chapter.id}-check">
-        <div class="doc-section__header">
-          <div>
-            <p class="section-kicker">Self Check</p>
-            <h2>章末自测</h2>
-          </div>
-        </div>
-        <div class="doc-copy">
-          <ul class="bullet-list">
-            ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-          </ul>
-        </div>
-      </section>
-
-      ${renderChapterPager(chapter)}
-    </article>
+      </div>
+    </section>
   `;
 }
 
 function renderApp(route = getCurrentRoute()) {
   appRoot.innerHTML = html`
-    <div class="docs-app ${route.view === "chapter" ? "is-chapter-view" : "is-home-view"}">
-      ${renderTopBar(route)}
-      <div class="site-layout">
-        ${renderSidebar(route)}
-        <section class="site-content">
-          ${route.view === "chapter" ? renderChapterPage(route.chapter) : renderHomePage()}
-        </section>
-        ${renderPageAside(route)}
-      </div>
+    <div class="site-layout ${route.view === "chapter" ? "is-chapter-view" : "is-home-view"} ${isRailCollapsed ? "is-rail-collapsed" : ""}">
+      ${
+        isRailCollapsed
+          ? html`
+              <div class="site-rail-peek">
+                ${renderRailToggle()}
+              </div>
+            `
+          : html`
+              <aside class="site-rail" id="siteRail">
+                <div class="site-rail__controls">
+                  ${renderRailToggle()}
+                </div>
+                ${renderPrimaryNav(route)}
+                ${renderStudyHints()}
+              </aside>
+            `
+      }
+      <section class="site-content">
+        ${route.view === "chapter" ? renderChapterPage(route.chapter) : renderHomePage()}
+      </section>
     </div>
   `;
   document.title = route.view === "chapter" ? `${route.chapter.titleCn} · ${siteMeta.title}` : siteMeta.title;
@@ -606,8 +581,22 @@ function renderApp(route = getCurrentRoute()) {
   return route;
 }
 
+function bindRailToggle() {
+  const toggle = document.querySelector("[data-role='rail-toggle']");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    isRailCollapsed = !isRailCollapsed;
+    writeRailState(isRailCollapsed);
+    initializePage();
+    requestAnimationFrame(() => {
+      document.querySelector("[data-role='rail-toggle']")?.focus();
+    });
+  });
+}
+
 function bindSearch(route) {
   const input = document.getElementById("searchInput");
+  const empty = document.getElementById("searchEmpty");
   if (!input) return;
 
   input.value = "";
@@ -620,186 +609,27 @@ function bindSearch(route) {
       const hit = !query || card.dataset.search.includes(query);
       card.classList.toggle("is-hidden", !hit);
     });
-  });
-}
 
-function bindCopyLink() {
-  const button = document.querySelector("[data-role='copy-link']");
-  if (!button) return;
-  button.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      button.textContent = "已复制";
-      window.setTimeout(() => {
-        button.textContent = "复制本页链接";
-      }, 1200);
-    } catch {
-      button.textContent = "复制失败";
-      window.setTimeout(() => {
-        button.textContent = "复制本页链接";
-      }, 1200);
+    if (empty) {
+      const visibleCount = cards.filter((card) => !card.classList.contains("is-hidden")).length;
+      empty.classList.toggle("is-hidden", visibleCount > 0);
     }
   });
-}
-
-function bindTocToggles() {
-  document.querySelectorAll(".toc-toggle[data-group]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      const groupId = button.dataset.group;
-      if (!groupId) return;
-
-      const group = document.querySelector(`.toc-group[data-group="${groupId}"]`);
-      if (!group) return;
-
-      const willOpen = !group.classList.contains("is-open");
-      group.classList.toggle("is-open", willOpen);
-      button.setAttribute("aria-expanded", willOpen ? "true" : "false");
-
-      if (willOpen) {
-        tocGroupState.add(groupId);
-      } else {
-        tocGroupState.delete(groupId);
-      }
-    });
-  });
-}
-
-function bindScrollSpy(route) {
-  if (releaseScrollSpy) {
-    releaseScrollSpy();
-    releaseScrollSpy = null;
-  }
-
-  if (route.view !== "chapter") return;
-
-  const pageAnchors = getPageAnchors(route.chapter);
-  const topicIds = route.chapter.sections.map((topic) => getTopicAnchor(route.chapter.id, topic));
-  const childToParent = new Map(pageAnchors.flatMap((item) => (item.children || []).map((child) => [child.id, item.id])));
-  const orderedIds = pageAnchors.flatMap((item) => [item.id, ...(item.children?.map((child) => child.id) || [])]);
-  const sections = orderedIds
-    .map((id) => document.getElementById(id))
-    .filter(Boolean);
-
-  if (!sections.length) return;
-
-  const topicLinks = [...document.querySelectorAll(".nav-topic-link[data-target]")];
-  const tocLinks = [...document.querySelectorAll(".toc-link[data-target], .toc-sublink[data-target]")];
-  const tocGroups = [...document.querySelectorAll(".toc-group[data-group]")];
-  const offset = 132;
-  let frameId = 0;
-  let lastTopicId = "";
-  let lastTocId = "";
-  let lastChildId = "";
-
-  const updateActiveState = () => {
-    frameId = 0;
-
-    let activeId = sections[0].id;
-    for (const section of sections) {
-      if (section.getBoundingClientRect().top - offset <= 0) {
-        activeId = section.id;
-      } else {
-        break;
-      }
-    }
-
-    const activeTopicId = topicIds.find((id) => activeId === id || activeId.startsWith(`${id}-`)) || "";
-    const activeTocId = childToParent.get(activeId) || activeId;
-    const activeChildId = childToParent.has(activeId) ? activeId : "";
-
-    topicLinks.forEach((link) => {
-      link.classList.toggle("is-active", link.dataset.target === activeTopicId);
-    });
-
-    tocLinks.forEach((link) => {
-      const target = link.dataset.target;
-      const isTopLevel = link.classList.contains("toc-link");
-      const isActive = isTopLevel ? target === activeTocId : target === activeChildId;
-      link.classList.toggle("is-active", isActive);
-    });
-
-    tocGroups.forEach((group) => {
-      const groupId = group.dataset.group;
-      const isCurrentGroup = Boolean(groupId && activeTocId === groupId);
-      const shouldOpen = Boolean(groupId && (tocGroupState.has(groupId) || isCurrentGroup));
-      group.classList.toggle("is-open", shouldOpen);
-      group.querySelector(".toc-toggle")?.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
-    });
-
-    if (activeTopicId && activeTopicId !== lastTopicId) {
-      document.querySelector(`.nav-topic-link[data-target="${activeTopicId}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      lastTopicId = activeTopicId;
-    } else if (!activeTopicId) {
-      lastTopicId = "";
-    }
-
-    if (activeTocId !== lastTocId || activeChildId !== lastChildId) {
-      const selector = activeChildId
-        ? `.toc-sublink[data-target="${activeChildId}"]`
-        : `.toc-link[data-target="${activeTocId}"]`;
-      document.querySelector(selector)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      lastTocId = activeTocId;
-      lastChildId = activeChildId;
-    }
-  };
-
-  const requestUpdate = () => {
-    if (frameId) return;
-    frameId = window.requestAnimationFrame(updateActiveState);
-  };
-
-  window.addEventListener("scroll", requestUpdate, { passive: true });
-  window.addEventListener("resize", requestUpdate);
-  updateActiveState();
-
-  releaseScrollSpy = () => {
-    if (frameId) {
-      window.cancelAnimationFrame(frameId);
-      frameId = 0;
-    }
-    window.removeEventListener("scroll", requestUpdate);
-    window.removeEventListener("resize", requestUpdate);
-  };
 }
 
 function focusTopicFromRoute(route) {
-  if (!route.topicAnchor) return;
+  if (route.view !== "chapter" || !route.topicAnchor) return;
   const target = document.getElementById(route.topicAnchor);
   if (!target) return;
   requestAnimationFrame(() => {
-    target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
   });
 }
 
-function bindRouteLinks() {
-  appRoot.onclick = (event) => {
-    const link = event.target.closest("a[href^='#']");
-    if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-
-    const hash = link.getAttribute("href");
-    if (!hash || hash === "#") return;
-
-    event.preventDefault();
-    if (window.location.hash !== hash) {
-      window.history.pushState(null, "", hash);
-    }
-    initializePage();
-  };
-}
-
 function initializePage() {
-  if (releaseScrollSpy) {
-    releaseScrollSpy();
-    releaseScrollSpy = null;
-  }
   const route = renderApp();
+  bindRailToggle();
   bindSearch(route);
-  bindCopyLink();
-  bindTocToggles();
-  bindScrollSpy(route);
   initDemos();
   focusTopicFromRoute(route);
 }
@@ -1019,7 +849,15 @@ function changeZoom(zoomState, direction) {
 }
 
 function attachWheelZoom(target, zoomState, render) {
-  return { target, zoomState, render };
+  target.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      changeZoom(zoomState, event.deltaY < 0 ? 1 : -1);
+      render();
+    },
+    { passive: false }
+  );
 }
 
 function mountZoomControls(host, zoomState, render, label = "图像缩放") {
@@ -2577,7 +2415,5 @@ function initDemos() {
   });
 }
 
-bindRouteLinks();
 window.addEventListener("hashchange", initializePage);
-window.addEventListener("popstate", initializePage);
 initializePage();
