@@ -5,6 +5,24 @@ const siteMeta = globalThis.siteMeta;
 const html = String.raw;
 
 const totalSections = reviewData.reduce((sum, chapter) => sum + chapter.sections.length, 0);
+const totalFormulas = reviewData.reduce((sum, chapter) => sum + chapter.formulaWall.length, 0);
+const totalDemos = reviewData.reduce((sum, chapter) => sum + chapter.demos.length, 0);
+const railStorageKey = "advanced-math-review-rail-collapsed";
+let isRailCollapsed = readRailState();
+
+function readRailState() {
+  try {
+    return globalThis.localStorage?.getItem(railStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeRailState(value) {
+  try {
+    globalThis.localStorage?.setItem(railStorageKey, value ? "1" : "0");
+  } catch {}
+}
 
 function stripMarkup(text) {
   return String(text)
@@ -42,131 +60,385 @@ function formatRichText(content) {
   return String(content).replace(/<span class="math">([\s\S]*?)<\/span>/g, (_, expr) => `<span class="math">${formatMathExpression(expr)}</span>`);
 }
 
-function renderApp() {
-  appRoot.innerHTML = html`
-    <div class="page-shell">
-      <aside class="sidebar">
-        <div class="sidebar-brand">
-          <div class="brand-mark">∫</div>
-          <div>
-            <h1>${siteMeta.title}</h1>
-            <p>${siteMeta.subtitle}</p>
-          </div>
-        </div>
-        <nav id="chapterNav" class="chapter-nav" aria-label="章节导航"></nav>
-        <div class="sidebar-note">
-          <h2>复习建议</h2>
-          <ul>
-            ${siteMeta.studyHints.map((hint) => `<li>${formatRichText(hint)}</li>`).join("")}
-          </ul>
-        </div>
-      </aside>
-      <main class="main-content">
-        <section class="hero">
-          <div class="hero-copy">
-            <p class="eyebrow">Thomas Calculus · Chapter 10-14</p>
-            <h2>按 PPT 五章结构整理的交互式复习站</h2>
-            <p class="hero-text">
-              每章都包含：章节地图、公式墙、分节知识点、易错项，以及可以直接拖动参数和视角的图形演示。
-            </p>
-          </div>
-          <div class="hero-metrics">
-            <div class="metric-card">
-              <span class="metric-value">${reviewData.length}</span>
-              <span class="metric-label">章节模块</span>
-            </div>
-            <div class="metric-card">
-              <span class="metric-value">${totalSections}</span>
-              <span class="metric-label">PPT 对应小节</span>
-            </div>
-            <div class="metric-card">
-              <span class="metric-value">${reviewData.reduce((sum, chapter) => sum + chapter.demos.length, 0)}</span>
-              <span class="metric-label">交互演示</span>
-            </div>
-          </div>
-        </section>
-        <section class="search-bar">
-          <label for="searchInput">知识点检索</label>
-          <input id="searchInput" type="search" placeholder="输入关键词，例如：Taylor、梯度、极坐标面积、叉积……" />
-        </section>
-        <section class="chapter-strip">
-          ${reviewData
-            .map(
-              (chapter) => html`
-                <a class="chapter-pill" href="#${chapter.id}" style="--chapter-accent:${chapter.accent}">
-                  <span>${chapter.shortLabel}</span>
-                  <strong>${chapter.titleCn}</strong>
-                </a>
-              `
-            )
-            .join("")}
-        </section>
-        <section id="chaptersContainer" class="chapters">
-          ${reviewData.map(renderChapter).join("")}
-        </section>
-      </main>
+function getCurrentRoute() {
+  const rawHash = decodeURIComponent(window.location.hash.replace(/^#/, "").trim());
+  if (!rawHash || rawHash === "home") {
+    return { view: "home", chapter: null, topicAnchor: "" };
+  }
+
+  const chapter = reviewData.find((item) => rawHash === item.id || rawHash.startsWith(`${item.id}-`));
+  if (!chapter) {
+    return { view: "home", chapter: null, topicAnchor: "" };
+  }
+
+  return {
+    view: "chapter",
+    chapter,
+    topicAnchor: rawHash !== chapter.id ? rawHash : "",
+  };
+}
+
+function getChapterIndex(chapterId) {
+  return reviewData.findIndex((chapter) => chapter.id === chapterId);
+}
+
+function getTopicAnchor(chapterId, topic) {
+  return `${chapterId}-${topic.code.replace(/\./g, "-")}`;
+}
+
+function getTopicSearchText(topic) {
+  return [
+    topic.code,
+    topic.titleCn,
+    topic.titleEn,
+    topic.focus,
+    ...topic.mustKnow,
+    ...topic.workflow,
+    ...topic.pitfalls,
+    ...topic.tags,
+  ]
+    .map(stripMarkup)
+    .join(" ")
+    .toLowerCase();
+}
+
+function getChapterSearchText(chapter) {
+  return [
+    chapter.titleCn,
+    chapter.titleEn,
+    ...chapter.goals,
+    ...chapter.studyPath,
+    ...chapter.examChecklist,
+    ...chapter.sections.flatMap((topic) => [topic.code, topic.titleCn, topic.titleEn, topic.focus, ...topic.tags]),
+  ]
+    .map(stripMarkup)
+    .join(" ")
+    .toLowerCase();
+}
+
+function renderPrimaryNav(route) {
+  return html`
+    <section class="rail-card rail-card--nav">
+      <p class="rail-label">Site Navigation</p>
+      <nav class="primary-nav" aria-label="章节导航">
+        <a href="#home" class="primary-nav__item ${route.view === "home" ? "is-active" : ""}">
+          <span>总览</span>
+          <strong>五章结构</strong>
+        </a>
+        ${reviewData
+          .map(
+            (chapter) => html`
+              <a href="#${chapter.id}" class="primary-nav__item ${route.chapter?.id === chapter.id ? "is-active" : ""}">
+                <span>${chapter.shortLabel}</span>
+                <strong>${chapter.titleCn}</strong>
+              </a>
+            `
+          )
+          .join("")}
+      </nav>
+    </section>
+  `;
+}
+
+function renderStudyHints() {
+  return html`
+    <section class="rail-card">
+      <p class="rail-label">Study Method</p>
+      <h2>使用方式</h2>
+      <ul class="bullet-list compact-list">
+        ${siteMeta.studyHints.map((hint) => `<li>${formatRichText(hint)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderLayoutControls() {
+  return html`
+    <div class="layout-controls ${isRailCollapsed ? "is-floating" : "is-inside-rail"}">
+      <button class="ghost-button rail-toggle" type="button" data-role="rail-toggle" aria-expanded="${String(!isRailCollapsed)}" aria-controls="siteRail">
+        ${isRailCollapsed ? "展开侧边栏" : "收起侧边栏"}
+      </button>
     </div>
   `;
 }
 
-function renderChapter(chapter) {
+function renderHomeSearch() {
   return html`
-    <section class="chapter-panel" id="${chapter.id}" style="--chapter-accent:${chapter.accent}">
-      <header class="chapter-header">
-        <div>
-          <p class="chapter-kicker">Chapter ${chapter.chapterNumber}</p>
-          <h2>${chapter.titleCn}</h2>
-          <p class="chapter-en">${chapter.titleEn}</p>
-        </div>
-        <div class="chapter-actions">
-          <button class="ghost-button" type="button" data-expand="${chapter.id}">展开本章</button>
-          <button class="ghost-button" type="button" data-collapse="${chapter.id}">收起本章</button>
-        </div>
-      </header>
+    <section class="search-panel">
+      <div>
+        <p class="section-kicker">Search</p>
+        <h3>按章节检索</h3>
+      </div>
+      <label class="search-field" for="searchInput">
+        <span>章节名、公式主题或关键概念</span>
+        <input id="searchInput" type="search" placeholder="例如：Taylor、极坐标、梯度、空间曲线" />
+      </label>
+    </section>
+    <p id="searchEmpty" class="search-empty is-hidden">没有匹配的章节，换一个关键词试试。</p>
+  `;
+}
 
-      <div class="chapter-grid">
-        <article class="chapter-card">
-          <h3>本章目标</h3>
-          <ul class="bullet-list">
+function renderChapterSearch() {
+  return html`
+    <section class="search-panel">
+      <div>
+        <p class="section-kicker">Search</p>
+        <h3>按知识点检索</h3>
+      </div>
+      <label class="search-field" for="searchInput">
+        <span>当前章节内快速定位</span>
+        <input id="searchInput" type="search" placeholder="例如：绝对收敛、偏心率、切平面、曲率" />
+      </label>
+    </section>
+    <p id="searchEmpty" class="search-empty is-hidden">本章没有匹配的知识点，换一个关键词试试。</p>
+  `;
+}
+
+function renderHomeChapterCard(chapter) {
+  return html`
+    <article class="chapter-entry" data-search="${escapeAttrValue(getChapterSearchText(chapter))}" style="--chapter-accent:${chapter.accent}">
+      <header class="chapter-entry__header">
+        <div>
+          <p class="chapter-entry__eyebrow">Chapter ${chapter.chapterNumber}</p>
+          <h3>${chapter.titleCn}</h3>
+          <p>${chapter.titleEn}</p>
+        </div>
+        <span class="chapter-entry__badge">${chapter.sections.length} 节</span>
+      </header>
+      <p class="chapter-entry__lead">${formatRichText(chapter.goals[0])}</p>
+      <div class="chapter-entry__grid">
+        <section>
+          <h4>本章抓手</h4>
+          <ul class="bullet-list compact-list">
             ${chapter.goals.map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
           </ul>
-        </article>
-        <article class="chapter-card">
-          <h3>复习路线</h3>
-          <ul class="bullet-list">
-            ${chapter.studyPath.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-          </ul>
-        </article>
+        </section>
+        <section>
+          <h4>小节目录</h4>
+          <ol class="outline-list">
+            ${chapter.sections
+              .map((topic) => `<li><span>${topic.code}</span><strong>${topic.titleCn}</strong><p>${formatRichText(topic.focus)}</p></li>`)
+              .join("")}
+          </ol>
+        </section>
       </div>
-
-      <article class="diagram-card">
-        <div class="diagram-meta">
-          <h3>${chapter.diagram.title}</h3>
-          <p>${formatRichText(chapter.diagram.subtitle)}</p>
+      <footer class="chapter-entry__footer">
+        <div class="stat-grid">
+          <div class="stat-chip"><strong>${chapter.formulaWall.length}</strong><span>公式</span></div>
+          <div class="stat-chip"><strong>${chapter.demos.length}</strong><span>实验</span></div>
+          <div class="stat-chip"><strong>${chapter.examChecklist.length}</strong><span>自测题</span></div>
         </div>
-        <div class="diagram-wrap">${chapter.diagram.svg}</div>
-      </article>
+        <a class="accent-button" href="#${chapter.id}">进入本章</a>
+      </footer>
+    </article>
+  `;
+}
 
-      <article class="formula-wall chapter-card">
-        <h3>公式墙</h3>
-        <div class="formula-grid">
-          ${chapter.formulaWall
+function renderHomePage() {
+  return html`
+    <section class="landing-hero">
+      <div class="landing-hero__copy">
+        <p class="eyebrow">Chapter 10-14 · Structured Review</p>
+        <h2>先建立地图，再进入单章深读</h2>
+        <p class="landing-hero__text">
+          这次不再把五章内容堆成同一种卡片流，而是先给总览，再进入单章正文。每章内部按导读、路线、公式、知识点、实验、自测六层展开。
+        </p>
+      </div>
+      <div class="landing-hero__metrics">
+        <article class="metric-card"><strong>${reviewData.length}</strong><span>章节</span></article>
+        <article class="metric-card"><strong>${totalSections}</strong><span>知识小节</span></article>
+        <article class="metric-card"><strong>${totalFormulas}</strong><span>核心公式</span></article>
+        <article class="metric-card"><strong>${totalDemos}</strong><span>交互实验</span></article>
+      </div>
+    </section>
+    ${renderHomeSearch()}
+    <section class="home-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Chapter Library</p>
+          <h3>五章总览</h3>
+        </div>
+        <p>每张卡片都先告诉你这章的核心任务，再列出章节目录，方便你判断先复习哪一部分。</p>
+      </div>
+      <div class="chapter-library">
+        ${reviewData.map(renderHomeChapterCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderChapterPager(chapter) {
+  const index = getChapterIndex(chapter.id);
+  const previous = index > 0 ? reviewData[index - 1] : null;
+  const next = index < reviewData.length - 1 ? reviewData[index + 1] : null;
+
+  return html`
+    <nav class="chapter-pager" aria-label="章节翻页">
+      <a class="ghost-button ${previous ? "" : "is-disabled"}" ${previous ? `href="#${previous.id}"` : ""}>${previous ? `上一章 · ${previous.titleCn}` : "已经是第一章"}</a>
+      <a class="ghost-button" href="#home">返回五章总览</a>
+      <a class="ghost-button ${next ? "" : "is-disabled"}" ${next ? `href="#${next.id}"` : ""}>${next ? `下一章 · ${next.titleCn}` : "已经是最后一章"}</a>
+    </nav>
+  `;
+}
+
+function renderChapterRail(chapter) {
+  return html`
+    <aside class="chapter-rail">
+      <section class="rail-card rail-card--accent" style="--chapter-accent:${chapter.accent}">
+        <p class="rail-label">Chapter Focus</p>
+        <h2>${chapter.titleCn}</h2>
+        <p>${chapter.titleEn}</p>
+        <div class="stat-grid">
+          <div class="stat-chip"><strong>${chapter.sections.length}</strong><span>小节</span></div>
+          <div class="stat-chip"><strong>${chapter.formulaWall.length}</strong><span>公式</span></div>
+          <div class="stat-chip"><strong>${chapter.demos.length}</strong><span>实验</span></div>
+        </div>
+      </section>
+      <section class="rail-card">
+        <p class="rail-label">Section Index</p>
+        <nav class="chapter-index" aria-label="${chapter.titleCn}小节导航">
+          ${chapter.sections
             .map(
-              (item) => html`
-                <div class="formula-card">
-                  <span class="formula-label">${item.label}</span>
-                  <div class="formula-body">${formatRichText(item.body)}</div>
-                </div>
+              (topic) => html`
+                <a href="#${getTopicAnchor(chapter.id, topic)}" class="chapter-index__item">
+                  <span>${topic.code}</span>
+                  <strong>${topic.titleCn}</strong>
+                </a>
               `
             )
             .join("")}
+        </nav>
+      </section>
+      <section class="rail-card">
+        <p class="rail-label">Checklist</p>
+        <ul class="bullet-list compact-list">
+          ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+        </ul>
+      </section>
+    </aside>
+  `;
+}
+
+function renderTopicOutline(chapter) {
+  return html`
+    <section class="content-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Outline</p>
+          <h3>本章知识目录</h3>
         </div>
-      </article>
-
-      <div class="topic-stack">
-        ${chapter.sections.map((topic, index) => renderTopic(topic, chapter.id, index)).join("")}
+        <p>先扫一遍每节到底在讲什么，再决定从哪一节开始精读。</p>
       </div>
+      <div class="topic-outline-grid">
+        ${chapter.sections
+          .map(
+            (topic) => html`
+              <a class="topic-outline-card" href="#${getTopicAnchor(chapter.id, topic)}">
+                <span class="topic-outline-card__code">${topic.code}</span>
+                <strong>${topic.titleCn}</strong>
+                <p>${formatRichText(topic.focus)}</p>
+              </a>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
 
+function renderFormulaWall(chapter) {
+  return html`
+    <section class="content-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Formula Wall</p>
+          <h3>骨架公式</h3>
+        </div>
+        <p>这一层只保留最常回忆的公式骨架，用来先搭结构，再回头做题。</p>
+      </div>
+      <div class="formula-grid">
+        ${chapter.formulaWall
+          .map(
+            (item) => html`
+              <article class="formula-card">
+                <span class="formula-label">${item.label}</span>
+                <div class="formula-body">${formatRichText(item.body)}</div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderTopicArticle(topic, chapterId) {
+  const topicAnchor = getTopicAnchor(chapterId, topic);
+
+  return html`
+    <article class="topic-card topic-article" id="${topicAnchor}" data-search="${escapeAttrValue(getTopicSearchText(topic))}">
+      <header class="topic-article__header">
+        <div class="topic-article__title">
+          <span class="topic-code">${topic.code}</span>
+          <div>
+            <h3>${topic.titleCn}</h3>
+            <p>${topic.titleEn}</p>
+          </div>
+        </div>
+        <div class="topic-tags">
+          ${topic.tags.map((tag) => `<span class="topic-tag">${tag}</span>`).join("")}
+        </div>
+      </header>
+      <p class="topic-focus">${formatRichText(topic.focus)}</p>
+      <div class="topic-article__grid">
+        <section class="topic-block">
+          <h4>必须理解</h4>
+          <ul class="bullet-list">
+            ${topic.mustKnow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+          </ul>
+        </section>
+        <section class="topic-block">
+          <h4>关键公式</h4>
+          <div class="mini-formula-grid">
+            ${topic.formulas
+              .map(
+                (item) => html`
+                  <article class="mini-formula-card">
+                    <span class="formula-label">${item.label}</span>
+                    <div class="formula-body">${formatRichText(item.body)}</div>
+                  </article>
+                `
+              )
+              .join("")}
+          </div>
+        </section>
+        <section class="topic-block">
+          <h4>题路步骤</h4>
+          <ul class="bullet-list">
+            ${topic.workflow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+          </ul>
+        </section>
+        <section class="topic-block">
+          <h4>易错提醒</h4>
+          <ul class="bullet-list">
+            ${topic.pitfalls.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+          </ul>
+        </section>
+      </div>
+    </article>
+  `;
+}
+
+function renderDemoStack(chapter) {
+  return html`
+    <section class="content-section">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Interactive Lab</p>
+          <h3>交互实验</h3>
+        </div>
+        <p>图像直觉、参数变化和空间视角统一放到这一层，不与定义解释混杂。</p>
+      </div>
       <div class="demo-stack">
         ${chapter.demos
           .map(
@@ -184,163 +456,166 @@ function renderChapter(chapter) {
           )
           .join("")}
       </div>
-
-      <article class="chapter-card checklist-card">
-        <h3>章末自测</h3>
-        <ul class="bullet-list">
-          ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-        </ul>
-      </article>
     </section>
   `;
 }
 
-function renderTopic(topic, chapterId, index) {
-  const searchText = [
-    topic.code,
-    topic.titleCn,
-    topic.titleEn,
-    topic.focus,
-    ...topic.mustKnow,
-    ...topic.workflow,
-    ...topic.pitfalls,
-    ...topic.tags,
-  ]
-    .map(stripMarkup)
-    .join(" ")
-    .toLowerCase();
-
+function renderChapterPage(chapter) {
   return html`
-    <details class="topic-card" ${index < 2 ? "open" : ""} data-chapter="${chapterId}" data-search="${escapeAttrValue(searchText)}">
-      <summary>
-        <div class="topic-summary-main">
-          <span class="topic-code">${topic.code}</span>
-          <div>
-            <h3>${topic.titleCn}</h3>
-            <p>${topic.titleEn}</p>
+    <section class="chapter-page" style="--chapter-accent:${chapter.accent}">
+      <header class="chapter-hero">
+        <div class="chapter-hero__meta">
+          <a class="ghost-button" href="#home">返回五章总览</a>
+          <span class="route-chip">Chapter ${chapter.chapterNumber}</span>
+        </div>
+        <div class="chapter-hero__grid">
+          <div class="chapter-hero__copy">
+            <h2>${chapter.titleCn}</h2>
+            <p class="chapter-hero__en">${chapter.titleEn}</p>
+            <p class="chapter-hero__lead">${formatRichText(chapter.goals[0])}</p>
+          </div>
+          <div class="chapter-hero__cards">
+            <article class="hero-note-card">
+              <p class="rail-label">本章目标</p>
+              <ul class="bullet-list compact-list">
+                ${chapter.goals.map((goal) => `<li>${formatRichText(goal)}</li>`).join("")}
+              </ul>
+            </article>
+            <article class="hero-note-card">
+              <p class="rail-label">复习顺序</p>
+              <ol class="outline-list outline-list--steps">
+                ${chapter.studyPath.map((item) => `<li><p>${formatRichText(item)}</p></li>`).join("")}
+              </ol>
+            </article>
           </div>
         </div>
-        <p class="topic-focus">${formatRichText(topic.focus)}</p>
-      </summary>
-      <div class="topic-body">
-        <div class="topic-grid">
-          <article class="topic-block">
-            <h4>核心概念</h4>
-            <ul class="bullet-list">
-              ${topic.mustKnow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-            </ul>
-          </article>
-          <article class="topic-block">
-            <h4>关键公式</h4>
-            <div class="mini-formula-grid">
-              ${topic.formulas
-                .map(
-                  (item) => html`
-                    <div class="mini-formula-card">
-                      <span class="formula-label">${item.label}</span>
-                      <div class="formula-body">${formatRichText(item.body)}</div>
-                    </div>
-                  `
-                )
-                .join("")}
+      </header>
+      ${renderChapterSearch()}
+      <div class="chapter-workspace">
+        ${renderChapterRail(chapter)}
+        <div class="chapter-reading">
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Diagram</p>
+                <h3>章节图解</h3>
+              </div>
+              <p>${formatRichText(chapter.diagram.subtitle)}</p>
             </div>
-          </article>
-          <article class="topic-block">
-            <h4>解题路线</h4>
-            <ul class="bullet-list">
-              ${topic.workflow.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-            </ul>
-          </article>
-          <article class="topic-block">
-            <h4>易错提醒</h4>
-            <ul class="bullet-list">
-              ${topic.pitfalls.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
-            </ul>
-          </article>
+            <article class="diagram-card">
+              <div class="diagram-meta">
+                <h3>${chapter.diagram.title}</h3>
+                <p>${formatRichText(chapter.diagram.subtitle)}</p>
+              </div>
+              <div class="diagram-wrap">${chapter.diagram.svg}</div>
+            </article>
+          </section>
+          ${renderTopicOutline(chapter)}
+          ${renderFormulaWall(chapter)}
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Knowledge Notes</p>
+                <h3>逐节整理</h3>
+              </div>
+              <p>每节固定成“理解点、公式、题路、易错”四栏，便于真正拿来复习，而不是浏览漂亮卡片。</p>
+            </div>
+            <div class="topic-stack">
+              ${chapter.sections.map((topic) => renderTopicArticle(topic, chapter.id)).join("")}
+            </div>
+          </section>
+          ${renderDemoStack(chapter)}
+          <section class="content-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Self Check</p>
+                <h3>章末自测</h3>
+              </div>
+              <p>最后用最短的问题检查本章有没有真正打通。</p>
+            </div>
+            <article class="checklist-card">
+              <ul class="bullet-list">
+                ${chapter.examChecklist.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
+              </ul>
+            </article>
+          </section>
+          ${renderChapterPager(chapter)}
         </div>
       </div>
-    </details>
+    </section>
   `;
 }
 
-function renderNav() {
-  const nav = document.getElementById("chapterNav");
-  nav.innerHTML = reviewData
-    .map(
-      (chapter) => html`
-        <a href="#${chapter.id}" class="nav-link" data-target="${chapter.id}">
-          <span>${chapter.shortLabel}</span>
-          <strong>${chapter.titleCn}</strong>
-        </a>
-      `
-    )
-    .join("");
+function renderApp(route = getCurrentRoute()) {
+  appRoot.innerHTML = html`
+    ${isRailCollapsed ? renderLayoutControls() : ""}
+    <div class="site-layout ${route.view === "chapter" ? "is-chapter-view" : "is-home-view"} ${isRailCollapsed ? "is-rail-collapsed" : ""}">
+      <aside class="site-rail" id="siteRail">
+        ${!isRailCollapsed ? renderLayoutControls() : ""}
+        ${renderPrimaryNav(route)}
+        ${renderStudyHints()}
+      </aside>
+      <section class="site-content">
+        ${route.view === "chapter" ? renderChapterPage(route.chapter) : renderHomePage()}
+      </section>
+    </div>
+  `;
+  document.title = route.view === "chapter" ? `${route.chapter.titleCn} · ${siteMeta.title}` : siteMeta.title;
+  document.body.dataset.view = route.view;
+  return route;
 }
 
-function bindChapterToggles() {
-  document.querySelectorAll("[data-expand]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const panel = document.getElementById(button.dataset.expand);
-      panel.querySelectorAll(".topic-card").forEach((detail) => {
-        detail.open = true;
-      });
-    });
-  });
-
-  document.querySelectorAll("[data-collapse]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const panel = document.getElementById(button.dataset.collapse);
-      panel.querySelectorAll(".topic-card").forEach((detail) => {
-        detail.open = false;
-      });
+function bindRailToggle() {
+  const toggle = document.querySelector("[data-role='rail-toggle']");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    isRailCollapsed = !isRailCollapsed;
+    writeRailState(isRailCollapsed);
+    initializePage();
+    requestAnimationFrame(() => {
+      document.querySelector("[data-role='rail-toggle']")?.focus();
     });
   });
 }
 
-function bindSearch() {
+function bindSearch(route) {
   const input = document.getElementById("searchInput");
-  const topicCards = [...document.querySelectorAll(".topic-card")];
-  const chapterPanels = [...document.querySelectorAll(".chapter-panel")];
+  const empty = document.getElementById("searchEmpty");
+  if (!input) return;
 
   input.value = "";
 
   input.addEventListener("input", () => {
     const query = input.value.trim().toLowerCase();
+    const cards = route.view === "chapter" ? [...document.querySelectorAll(".topic-card")] : [...document.querySelectorAll(".chapter-entry")];
 
-    topicCards.forEach((card) => {
+    cards.forEach((card) => {
       const hit = !query || card.dataset.search.includes(query);
       card.classList.toggle("is-hidden", !hit);
-      if (query && hit) {
-        card.open = true;
-      }
     });
 
-    chapterPanels.forEach((panel) => {
-      const visibleTopics = [...panel.querySelectorAll(".topic-card")].filter((card) => !card.classList.contains("is-hidden"));
-      panel.classList.toggle("chapter-hidden", visibleTopics.length === 0);
-    });
+    if (empty) {
+      const visibleCount = cards.filter((card) => !card.classList.contains("is-hidden")).length;
+      empty.classList.toggle("is-hidden", visibleCount > 0);
+    }
   });
 }
 
-function bindActiveNav() {
-  const links = [...document.querySelectorAll(".nav-link")];
-  const sections = links
-    .map((link) => document.getElementById(link.dataset.target))
-    .filter(Boolean);
+function focusTopicFromRoute(route) {
+  if (route.view !== "chapter" || !route.topicAnchor) return;
+  const target = document.getElementById(route.topicAnchor);
+  if (!target) return;
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+}
 
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        links.forEach((link) => {
-          link.classList.toggle("is-active", link.dataset.target === entry.target.id);
-        });
-      });
-    },
-    { rootMargin: "-30% 0px -55% 0px", threshold: 0.01 }
-  );
-
-  sections.forEach((section) => observer.observe(section));
+function initializePage() {
+  const route = renderApp();
+  bindRailToggle();
+  bindSearch(route);
+  initDemos();
+  focusTopicFromRoute(route);
 }
 
 function round(value, digits = 3) {
@@ -387,6 +662,23 @@ function pathFromPoints(points, frame) {
   return points
     .map((point, index) => `${index === 0 ? "M" : "L"} ${frame.x(point.x)} ${frame.y(point.y)}`)
     .join(" ");
+}
+
+function segmentedPathFromPoints(points, frame, jumpLimit = Number.POSITIVE_INFINITY) {
+  const commands = [];
+  let previous = null;
+  points.forEach((point) => {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      previous = null;
+      return;
+    }
+    if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) > jumpLimit) {
+      previous = null;
+    }
+    commands.push(`${previous ? "L" : "M"} ${frame.x(point.x)} ${frame.y(point.y)}`);
+    previous = point;
+  });
+  return commands.join(" ");
 }
 
 function axisMarkup(frame, ticksX = [], ticksY = []) {
@@ -518,6 +810,77 @@ function createControlRow(host, controls, note = "") {
   `;
 }
 
+function createZoomState(initial = 1, min = 0.7, max = 3, step = 1.2) {
+  return { value: initial, min, max, step };
+}
+
+function zoomBounds(xMin, xMax, yMin, yMax, zoom) {
+  const centerX = (xMin + xMax) / 2;
+  const centerY = (yMin + yMax) / 2;
+  const spanX = (xMax - xMin || 1) / zoom;
+  const spanY = (yMax - yMin || 1) / zoom;
+  return {
+    xMin: centerX - spanX / 2,
+    xMax: centerX + spanX / 2,
+    yMin: centerY - spanY / 2,
+    yMax: centerY + spanY / 2,
+  };
+}
+
+function changeZoom(zoomState, direction) {
+  const factor = direction > 0 ? zoomState.step : 1 / zoomState.step;
+  zoomState.value = clamp(zoomState.value * factor, zoomState.min, zoomState.max);
+}
+
+function attachWheelZoom(target, zoomState, render) {
+  target.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      changeZoom(zoomState, event.deltaY < 0 ? 1 : -1);
+      render();
+    },
+    { passive: false }
+  );
+}
+
+function mountZoomControls(host, zoomState, render, label = "图像缩放") {
+  const controlsGrid = host.querySelector(".demo-controls") || host;
+  const wrapper = document.createElement("div");
+  wrapper.className = "zoom-controls";
+  wrapper.innerHTML = html`
+    <span class="zoom-label">${label}</span>
+    <div class="zoom-buttons">
+      <button class="ghost-button" type="button" data-role="zoom-out">缩小</button>
+      <button class="ghost-button" type="button" data-role="zoom-reset">重置</button>
+      <button class="ghost-button" type="button" data-role="zoom-in">放大</button>
+    </div>
+    <span class="zoom-readout" data-role="zoom-readout"></span>
+  `;
+  controlsGrid.appendChild(wrapper);
+
+  const readout = wrapper.querySelector("[data-role='zoom-readout']");
+  const sync = () => {
+    readout.textContent = `${Math.round(zoomState.value * 100)}%`;
+  };
+  wrapper.querySelector("[data-role='zoom-out']").addEventListener("click", () => {
+    changeZoom(zoomState, -1);
+    sync();
+    render();
+  });
+  wrapper.querySelector("[data-role='zoom-reset']").addEventListener("click", () => {
+    zoomState.value = 1;
+    sync();
+    render();
+  });
+  wrapper.querySelector("[data-role='zoom-in']").addEventListener("click", () => {
+    changeZoom(zoomState, 1);
+    sync();
+    render();
+  });
+  sync();
+}
+
 function initSequenceSeriesDemo(card) {
   const body = card.querySelector(".demo-card-body");
   body.innerHTML = html`
@@ -574,6 +937,7 @@ function initSequenceSeriesDemo(card) {
     preset: "geometric",
     count: 24,
   };
+  const zoom = createZoomState(1, 0.75, 2.8, 1.18);
 
   createControlRow(
     controls,
@@ -606,8 +970,10 @@ function initSequenceSeriesDemo(card) {
     const termMax = Math.max(...termValues, termLimit) + 0.2;
     const sumMin = Math.min(...sumValues, 0) - 0.4;
     const sumMax = Math.max(...sumValues, 0) + 0.4;
-    const termFrame = createSvgFrame(430, 220, 1, state.count, termMin, termMax);
-    const sumFrame = createSvgFrame(430, 220, 1, state.count, sumMin, sumMax);
+    const termBounds = zoomBounds(1, state.count, termMin, termMax, zoom.value);
+    const sumBounds = zoomBounds(1, state.count, sumMin, sumMax, zoom.value);
+    const termFrame = createSvgFrame(430, 220, termBounds.xMin, termBounds.xMax, termBounds.yMin, termBounds.yMax);
+    const sumFrame = createSvgFrame(430, 220, sumBounds.xMin, sumBounds.xMax, sumBounds.yMin, sumBounds.yMax);
 
     termsSvg.innerHTML = html`
       ${axisMarkup(termFrame, [1, Math.floor(state.count / 2), state.count], [Math.floor(termMin), 0, Math.ceil(termMax)])}
@@ -649,6 +1015,9 @@ function initSequenceSeriesDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(termsSvg, zoom, render);
+  attachWheelZoom(sumsSvg, zoom, render);
   render();
 }
 
@@ -748,6 +1117,7 @@ function initTaylorDemo(card) {
     degree: 4,
     x: 0.6,
   };
+  const zoom = createZoomState(1, 0.75, 2.8, 1.18);
 
   createControlRow(
     controls,
@@ -779,7 +1149,8 @@ function initTaylorDemo(card) {
     const allY = points.flatMap((item) => [item.actual, item.approx]);
     const yMin = Math.min(...allY);
     const yMax = Math.max(...allY);
-    const frame = createSvgFrame(500, 300, xMin, xMax, yMin - 0.4, yMax + 0.4, 42);
+    const bounds = zoomBounds(xMin, xMax, yMin - 0.4, yMax + 0.4, zoom.value);
+    const frame = createSvgFrame(500, 300, bounds.xMin, bounds.xMax, bounds.yMin, bounds.yMax, 42);
     const actualPath = pathFromPoints(points.map((item) => ({ x: item.x, y: item.actual })), frame);
     const approxPath = pathFromPoints(points.map((item) => ({ x: item.x, y: item.approx })), frame);
     const clampedX = clamp(state.x, xMin, xMax);
@@ -822,6 +1193,8 @@ function initTaylorDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(svg, zoom, render);
   render();
 }
 
@@ -879,6 +1252,7 @@ function initParametricDemo(card) {
     frameId: 0,
     lastTime: 0,
   };
+  const zoom = createZoomState(1, 0.75, 2.8, 1.18);
 
   createControlRow(
     controls,
@@ -910,7 +1284,8 @@ function initParametricDemo(card) {
     });
     const xs = samples.map((point) => point.x);
     const ys = samples.map((point) => point.y);
-    const frame = createSvgFrame(460, 320, Math.min(...xs) - 0.6, Math.max(...xs) + 0.6, Math.min(...ys) - 0.6, Math.max(...ys) + 0.6, 42);
+    const bounds = zoomBounds(Math.min(...xs) - 0.6, Math.max(...xs) + 0.6, Math.min(...ys) - 0.6, Math.max(...ys) + 0.6, zoom.value);
+    const frame = createSvgFrame(460, 320, bounds.xMin, bounds.xMax, bounds.yMin, bounds.yMax, 42);
     const path = pathFromPoints(samples, frame);
     const point = preset.eval(state.t);
     const tangent = preset.deriv(state.t);
@@ -987,6 +1362,8 @@ function initParametricDemo(card) {
     state.frameId = requestAnimationFrame(tick);
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(svg, zoom, render);
   state.t = presets[state.preset].tMin;
   render();
 }
@@ -1037,6 +1414,10 @@ function initPolarDemo(card) {
       describe: (state) => `当前偏心率 e=${round(state.eccentricity, 2)}：${state.eccentricity < 1 ? "椭圆" : state.eccentricity === 1 ? "抛物线边界" : "双曲线"}`,
     },
   };
+  const conicDirectrixX = 2;
+  const conicFrameLimit = 6;
+  const conicRadiusCap = 6.2;
+  const conicJumpLimit = 0.85;
 
   const state = {
     preset: "rose",
@@ -1046,6 +1427,7 @@ function initPolarDemo(card) {
     frameId: 0,
     lastTime: 0,
   };
+  const zoom = createZoomState(1, 0.75, 2.6, 1.18);
 
   createControlRow(
     controls,
@@ -1054,17 +1436,29 @@ function initPolarDemo(card) {
         .map(([key, preset]) => `<option value="${key}">${preset.label}</option>`)
         .join("")}</select></label>`,
       `<label>θ<input data-role="theta" type="range" min="0" max="1000" value="0" /></label>`,
-      `<label class="conditional-control">偏心率 e<input data-role="e" type="range" min="30" max="170" value="70" /></label>`,
+      `<label data-role="e-wrap">偏心率 e（仅圆锥曲线）<input data-role="e" type="range" min="30" max="170" value="70" /></label>`,
       `<button class="accent-button" type="button" data-role="toggle">播放</button>`,
     ],
-    "当前半径会用橙色射线表示。若 r 为负，点会落到反方向，这是极坐标最容易错的地方。"
+    "当前半径会用橙色射线表示。选中圆锥曲线后，偏心率定义为 e = PF / PD，其中 F 是焦点（极点），D 是点到准线的距离。"
   );
 
   const presetSelect = controls.querySelector("[data-role='preset']");
   const thetaInput = controls.querySelector("[data-role='theta']");
   const eInput = controls.querySelector("[data-role='e']");
   const toggleButton = controls.querySelector("[data-role='toggle']");
-  const conditionalControl = controls.querySelector(".conditional-control");
+  const eWrap = controls.querySelector("[data-role='e-wrap']");
+
+  const samplePolarPoint = (preset, theta) => {
+    const r = preset.eval(theta, state);
+    if (!Number.isFinite(r)) return null;
+    if (state.preset === "conic" && Math.abs(r) > conicRadiusCap) return null;
+    const point = {
+      x: r * Math.cos(theta),
+      y: r * Math.sin(theta),
+      r,
+    };
+    return Number.isFinite(point.x) && Number.isFinite(point.y) ? point : null;
+  };
 
   const syncThetaSlider = () => {
     const preset = presets[state.preset];
@@ -1073,33 +1467,57 @@ function initPolarDemo(card) {
 
   const render = () => {
     const preset = presets[state.preset];
-    conditionalControl.classList.toggle("is-visible", state.preset === "conic");
-    const samples = range(0, 300, 1).map((step) => {
-      const theta = (step / 300) * preset.thetaMax;
-      const r = preset.eval(theta, state);
-      return {
-        x: r * Math.cos(theta),
-        y: r * Math.sin(theta),
-      };
+    const isConic = state.preset === "conic";
+    eInput.disabled = !isConic;
+    eWrap.classList.toggle("is-disabled", !isConic);
+
+    const sampleSteps = isConic ? 720 : 300;
+    const samples = range(0, sampleSteps, 1).map((step) => {
+      const theta = (step / sampleSteps) * preset.thetaMax;
+      return samplePolarPoint(preset, theta);
     });
-    const xs = samples.map((point) => point.x);
-    const ys = samples.map((point) => point.y);
-    const limit = Math.max(Math.abs(Math.min(...xs)), Math.abs(Math.max(...xs)), Math.abs(Math.min(...ys)), Math.abs(Math.max(...ys)), 2.5) + 0.8;
-    const frame = createSvgFrame(460, 320, -limit, limit, -limit, limit, 44);
-    const currentR = preset.eval(state.theta, state);
-    const current = { x: currentR * Math.cos(state.theta), y: currentR * Math.sin(state.theta) };
+    const validSamples = samples.filter(Boolean);
+    const xs = validSamples.map((point) => point.x);
+    const ys = validSamples.map((point) => point.y);
+    const limit = isConic
+      ? conicFrameLimit
+      : Math.max(Math.abs(Math.min(...xs)), Math.abs(Math.max(...xs)), Math.abs(Math.min(...ys)), Math.abs(Math.max(...ys)), 2.5) + 0.8;
+    const visibleLimit = limit / zoom.value;
+    const frame = createSvgFrame(460, 320, -visibleLimit, visibleLimit, -visibleLimit, visibleLimit, 44);
+    const currentPoint = samplePolarPoint(preset, state.theta);
+    const currentR = currentPoint ? currentPoint.r : preset.eval(state.theta, state);
+    const current = currentPoint || { x: null, y: null };
     const axisTicks = [-Math.floor(limit / 2), 0, Math.floor(limit / 2)];
+    const focusDistance = currentPoint ? Math.abs(currentPoint.r) : null;
+    const directrixDistance = currentPoint ? Math.abs(conicDirectrixX - currentPoint.x) : null;
+    const ratio = focusDistance !== null && directrixDistance ? focusDistance / directrixDistance : null;
+    const currentRLabel = Number.isFinite(currentR) ? round(currentR, 3) : "∞";
+    const currentXLabel = currentPoint ? round(current.x, 3) : "超出视窗";
+    const currentYLabel = currentPoint ? round(current.y, 3) : "超出视窗";
 
     svg.innerHTML = html`
       ${axisMarkup(frame, axisTicks, axisTicks)}
       <circle cx="${frame.x(0)}" cy="${frame.y(0)}" r="${(frame.x(1) - frame.x(0)) * 1.5}" fill="none" stroke="#ece5d5" />
-      <path d="${pathFromPoints(samples, frame)}" fill="none" stroke="#295a67" stroke-width="3" />
-      <line x1="${frame.x(0)}" y1="${frame.y(0)}" x2="${frame.x(current.x)}" y2="${frame.y(current.y)}" stroke="#d57f38" stroke-width="3" />
-      <circle cx="${frame.x(current.x)}" cy="${frame.y(current.y)}" r="6" fill="#d57f38" />
+      <path d="${segmentedPathFromPoints(validSamples, frame, isConic ? conicJumpLimit : Number.POSITIVE_INFINITY)}" fill="none" stroke="#295a67" stroke-width="3" />
       ${
-        preset.showDirectrix
+        currentPoint
+          ? `<line x1="${frame.x(0)}" y1="${frame.y(0)}" x2="${frame.x(current.x)}" y2="${frame.y(current.y)}" stroke="#d57f38" stroke-width="3" />
+             <circle cx="${frame.x(current.x)}" cy="${frame.y(current.y)}" r="6" fill="#d57f38" />`
+          : ""
+      }
+      ${
+        isConic
           ? `<line x1="${frame.x(2)}" y1="${frame.padding}" x2="${frame.x(2)}" y2="${320 - frame.padding}" stroke="#8a4c3c" stroke-dasharray="8 6" />
-             <text x="${frame.x(2) + 8}" y="${frame.padding + 18}" fill="#8a4c3c" font-size="12">directrix x = 2</text>`
+             <circle cx="${frame.x(0)}" cy="${frame.y(0)}" r="4.5" fill="#295a67" />
+             <text x="${frame.x(0) + 8}" y="${frame.y(0) - 10}" fill="#295a67" font-size="12">焦点 F</text>
+             <text x="${frame.x(2) + 8}" y="${frame.padding + 18}" fill="#8a4c3c" font-size="12">准线 x = 2</text>
+             ${
+               currentPoint
+                 ? `<line x1="${frame.x(current.x)}" y1="${frame.y(current.y)}" x2="${frame.x(conicDirectrixX)}" y2="${frame.y(current.y)}" stroke="#8a4c3c" stroke-dasharray="6 5" />
+                    <text x="${frame.x(conicDirectrixX) - 8}" y="${frame.y(current.y) - 8}" text-anchor="end" fill="#8a4c3c" font-size="12">PD</text>
+                    <text x="${(frame.x(0) + frame.x(current.x)) / 2}" y="${(frame.y(0) + frame.y(current.y)) / 2 - 8}" text-anchor="middle" fill="#d57f38" font-size="12">PF</text>`
+                 : ""
+             }`
           : ""
       }
       <text x="62" y="30" fill="#295a67" font-size="13">极坐标轨迹</text>
@@ -1108,11 +1526,18 @@ function initPolarDemo(card) {
     stats.innerHTML = html`
       <div class="stat-grid">
         <div class="stat-chip"><span>θ</span><strong>${round(state.theta, 3)}</strong></div>
-        <div class="stat-chip"><span>r(θ)</span><strong>${round(currentR, 3)}</strong></div>
-        <div class="stat-chip"><span>x</span><strong>${round(current.x, 3)}</strong></div>
-        <div class="stat-chip"><span>y</span><strong>${round(current.y, 3)}</strong></div>
+        <div class="stat-chip"><span>r(θ)</span><strong>${currentRLabel}</strong></div>
+        <div class="stat-chip"><span>x</span><strong>${currentXLabel}</strong></div>
+        <div class="stat-chip"><span>y</span><strong>${currentYLabel}</strong></div>
+        ${
+          isConic
+            ? `<div class="stat-chip"><span>偏心率 e</span><strong>${round(state.eccentricity, 2)}</strong></div>
+               <div class="stat-chip"><span>曲线类型</span><strong>${state.eccentricity < 1 ? "椭圆" : state.eccentricity === 1 ? "抛物线" : "双曲线"}</strong></div>
+               <div class="stat-chip"><span>PF / PD</span><strong>${ratio !== null ? round(ratio, 3) : "接近无穷远"}</strong></div>`
+            : ""
+        }
       </div>
-      <p class="demo-explain">${preset.describe(state)}</p>
+      <p class="demo-explain">${preset.describe(state)}${isConic ? " 焦点固定在极点，准线固定为 x = 2；橙色线段是 PF，棕色虚线段是 PD，所以拖动 e 时看到的其实是 PF/PD 这个比值在改变。" : ""}${isConic && !currentPoint ? " 当前 θ 已靠近双曲线的渐近方向，所以 r 会迅速变大，图上做了截断显示。" : ""}</p>
     `;
   };
 
@@ -1161,6 +1586,8 @@ function initPolarDemo(card) {
     state.frameId = requestAnimationFrame(tick);
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(svg, zoom, render);
   render();
 }
 
@@ -1221,6 +1648,7 @@ function initVectorDemo(card) {
 
   const orbit = { yaw: -0.7, pitch: 0.5 };
   const state = { preset: "generic" };
+  const zoom = createZoomState(1, 0.72, 2.2, 1.15);
 
   createControlRow(
     controls,
@@ -1236,6 +1664,7 @@ function initVectorDemo(card) {
 
   const render = () => {
     const preset = presets[state.preset];
+    const scale = 64 * zoom.value;
     const a = preset.a;
     const b = preset.b;
     const dot = a.x * b.x + a.y * b.y + a.z * b.z;
@@ -1256,12 +1685,12 @@ function initVectorDemo(card) {
       [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 3.2 }, "#3c6f8f"],
     ];
     axes.forEach(([from, to, color]) => {
-      const [p1, p2] = projectScenePoints([from, to], orbit, canvas.width, canvas.height, 64).map((item) => item.projected);
+      const [p1, p2] = projectScenePoints([from, to], orbit, canvas.width, canvas.height, scale).map((item) => item.projected);
       drawArrow(ctx, p1, p2, color, 2.2);
     });
 
     const plane = [a, { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }, b, { x: 0, y: 0, z: 0 }];
-    const planePoints = projectScenePoints(plane, orbit, canvas.width, canvas.height, 64);
+    const planePoints = projectScenePoints(plane, orbit, canvas.width, canvas.height, scale);
     ctx.fillStyle = "rgba(41, 90, 103, 0.11)";
     ctx.beginPath();
     planePoints.forEach((item, index) => {
@@ -1273,7 +1702,7 @@ function initVectorDemo(card) {
     ctx.fill();
 
     const drawVector3 = (vector, color) => {
-      const [origin, end] = projectScenePoints([{ x: 0, y: 0, z: 0 }, vector], orbit, canvas.width, canvas.height, 64).map((item) => item.projected);
+      const [origin, end] = projectScenePoints([{ x: 0, y: 0, z: 0 }, vector], orbit, canvas.width, canvas.height, scale).map((item) => item.projected);
       drawArrow(ctx, origin, end, color, 3.6);
       return end;
     };
@@ -1282,7 +1711,7 @@ function initVectorDemo(card) {
     drawVector3(b, "#c37332");
     drawVector3(cross, "#7e5a93");
 
-    const projectionPoints = projectScenePoints([a, projection], orbit, canvas.width, canvas.height, 64);
+    const projectionPoints = projectScenePoints([a, projection], orbit, canvas.width, canvas.height, scale);
     ctx.strokeStyle = "#7e7a6e";
     ctx.setLineDash([8, 6]);
     ctx.lineWidth = 2;
@@ -1307,6 +1736,8 @@ function initVectorDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render, "视距缩放");
+  attachWheelZoom(canvas, zoom, render);
   attachOrbit(canvas, orbit, render);
   render();
 }
@@ -1439,6 +1870,7 @@ function initQuadricDemo(card) {
 
   const orbit = { yaw: -0.65, pitch: 0.5 };
   const state = { surface: "ellipsoid" };
+  const zoom = createZoomState(1, 0.72, 2.2, 1.15);
 
   createControlRow(
     controls,
@@ -1453,9 +1885,10 @@ function initQuadricDemo(card) {
   const surfaceSelect = controls.querySelector("[data-role='surface']");
 
   const render = () => {
+    const scale = 66 * zoom.value;
     drawCanvasBackdrop(ctx, canvas.width, canvas.height);
     const surface = surfaces[state.surface];
-    drawPatches(ctx, surface.patches(), orbit, canvas.width, canvas.height, 66, "rgba(41, 90, 103, 0.16)", "#295a67");
+    drawPatches(ctx, surface.patches(), orbit, canvas.width, canvas.height, scale, "rgba(41, 90, 103, 0.16)", "#295a67");
     stats.innerHTML = `<p class="demo-explain">${surface.note}</p>`;
   };
 
@@ -1464,6 +1897,8 @@ function initQuadricDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render, "视距缩放");
+  attachWheelZoom(canvas, zoom, render);
   attachOrbit(canvas, orbit, render);
   render();
 }
@@ -1514,6 +1949,7 @@ function initSpaceMotionDemo(card) {
 
   const orbit = { yaw: -0.72, pitch: 0.48 };
   const state = { preset: "helix", t: 0, playing: false, frameId: 0, lastTime: 0 };
+  const zoom = createZoomState(1, 0.72, 2.25, 1.15);
 
   createControlRow(
     controls,
@@ -1538,9 +1974,10 @@ function initSpaceMotionDemo(card) {
 
   const render = () => {
     const preset = presets[state.preset];
+    const scale = 70 * zoom.value;
     drawCanvasBackdrop(ctx, canvas.width, canvas.height);
     const samples = range(0, 180, 1).map((step) => preset.eval(lerp(preset.tMin, preset.tMax, step / 180)));
-    const projectedCurve = projectScenePoints(samples, orbit, canvas.width, canvas.height, 70).map((item) => item.projected);
+    const projectedCurve = projectScenePoints(samples, orbit, canvas.width, canvas.height, scale).map((item) => item.projected);
     ctx.strokeStyle = "#295a67";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1562,7 +1999,7 @@ function initSpaceMotionDemo(card) {
       orbit,
       canvas.width,
       canvas.height,
-      70
+      scale
     ).map((item) => item.projected);
 
     ctx.fillStyle = "#d57f38";
@@ -1623,6 +2060,8 @@ function initSpaceMotionDemo(card) {
     state.frameId = requestAnimationFrame(tick);
   });
 
+  mountZoomControls(controls, zoom, render, "视距缩放");
+  attachWheelZoom(canvas, zoom, render);
   attachOrbit(canvas, orbit, render);
   state.t = presets[state.preset].tMin;
   render();
@@ -1645,6 +2084,7 @@ function initPolarMotionDemo(card) {
   const svg = body.querySelector("svg");
 
   const state = { t: 0, playing: false, frameId: 0, lastTime: 0 };
+  const zoom = createZoomState(1, 0.75, 2.8, 1.18);
 
   createControlRow(
     controls,
@@ -1682,7 +2122,8 @@ function initPolarMotionDemo(card) {
       const { r, theta } = curve(t);
       return { x: r * Math.cos(theta), y: r * Math.sin(theta) };
     });
-    const frame = createSvgFrame(460, 320, -2.6, 2.6, -2.2, 2.2, 42);
+    const bounds = zoomBounds(-2.6, 2.6, -2.2, 2.2, zoom.value);
+    const frame = createSvgFrame(460, 320, bounds.xMin, bounds.xMax, bounds.yMin, bounds.yMax, 42);
     const { r, theta, radial, tangential } = velocityComponents(state.t);
     const point = { x: r * Math.cos(theta), y: r * Math.sin(theta) };
     const radialUnit = { x: Math.cos(theta), y: Math.sin(theta) };
@@ -1742,6 +2183,8 @@ function initPolarMotionDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(svg, zoom, render);
   render();
 }
 
@@ -1785,6 +2228,7 @@ function initSurfaceDemo(card) {
 
   const orbit = { yaw: -0.74, pitch: 0.46 };
   const state = { surface: "paraboloid", x: 0.6, y: 0.6 };
+  const zoom = createZoomState(1, 0.72, 2.2, 1.15);
 
   createControlRow(
     controls,
@@ -1804,17 +2248,18 @@ function initSurfaceDemo(card) {
 
   const render = () => {
     const surface = surfaces[state.surface];
+    const scale = 68 * zoom.value;
     drawCanvasBackdrop(ctx, canvas.width, canvas.height);
 
-    drawPatches(ctx, sampleSurface(surface.f, -2.5, 2.5, -2.5, 2.5, 18, 18), orbit, canvas.width, canvas.height, 68, "rgba(41, 90, 103, 0.15)", "#295a67");
+    drawPatches(ctx, sampleSurface(surface.f, -2.5, 2.5, -2.5, 2.5, 18, 18), orbit, canvas.width, canvas.height, scale, "rgba(41, 90, 103, 0.15)", "#295a67");
 
     const z0 = surface.f(state.x, state.y);
     const fx = surface.fx(state.x, state.y);
     const fy = surface.fy(state.x, state.y);
     const tangent = (x, y) => z0 + fx * (x - state.x) + fy * (y - state.y);
-    drawPatches(ctx, sampleSurface(tangent, state.x - 1.1, state.x + 1.1, state.y - 1.1, state.y + 1.1, 6, 6), orbit, canvas.width, canvas.height, 68, "rgba(213, 127, 56, 0.18)", "#c37332");
+    drawPatches(ctx, sampleSurface(tangent, state.x - 1.1, state.x + 1.1, state.y - 1.1, state.y + 1.1, 6, 6), orbit, canvas.width, canvas.height, scale, "rgba(213, 127, 56, 0.18)", "#c37332");
 
-    const [point] = projectScenePoints([{ x: state.x, y: z0, z: state.y }], orbit, canvas.width, canvas.height, 68).map((item) => item.projected);
+    const [point] = projectScenePoints([{ x: state.x, y: z0, z: state.y }], orbit, canvas.width, canvas.height, scale).map((item) => item.projected);
     ctx.fillStyle = "#d57f38";
     ctx.beginPath();
     ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
@@ -1844,6 +2289,8 @@ function initSurfaceDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render, "视距缩放");
+  attachWheelZoom(canvas, zoom, render);
   attachOrbit(canvas, orbit, render);
   render();
 }
@@ -1865,6 +2312,7 @@ function initLagrangeDemo(card) {
   const svg = body.querySelector("svg");
 
   const state = { mode: "max" };
+  const zoom = createZoomState(1, 0.75, 2.8, 1.18);
 
   createControlRow(
     controls,
@@ -1882,7 +2330,8 @@ function initLagrangeDemo(card) {
   const render = () => {
     const point = state.mode === "max" ? { x: Math.SQRT2, y: Math.SQRT2 } : { x: -Math.SQRT2, y: -Math.SQRT2 };
     const c = point.x + point.y;
-    const frame = createSvgFrame(460, 320, -3.2, 3.2, -2.4, 2.4, 42);
+    const bounds = zoomBounds(-3.2, 3.2, -2.4, 2.4, zoom.value);
+    const frame = createSvgFrame(460, 320, bounds.xMin, bounds.xMax, bounds.yMin, bounds.yMax, 42);
     const circle = range(0, 180, 1).map((step) => {
       const t = (step / 180) * Math.PI * 2;
       return { x: 2 * Math.cos(t), y: 2 * Math.sin(t) };
@@ -1923,6 +2372,8 @@ function initLagrangeDemo(card) {
     render();
   });
 
+  mountZoomControls(controls, zoom, render);
+  attachWheelZoom(svg, zoom, render);
   render();
 }
 
@@ -1948,9 +2399,5 @@ function initDemos() {
   });
 }
 
-renderApp();
-renderNav();
-bindChapterToggles();
-bindSearch();
-bindActiveNav();
-initDemos();
+window.addEventListener("hashchange", initializePage);
+initializePage();
