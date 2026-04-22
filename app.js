@@ -152,13 +152,18 @@ function renderStudyHints() {
   `;
 }
 
-function renderLayoutControls() {
+function renderRailToggle() {
   return html`
-    <div class="layout-controls ${isRailCollapsed ? "is-floating" : "is-inside-rail"}">
-      <button class="ghost-button rail-toggle" type="button" data-role="rail-toggle" aria-expanded="${String(!isRailCollapsed)}" aria-controls="siteRail">
-        ${isRailCollapsed ? "展开侧边栏" : "收起侧边栏"}
-      </button>
-    </div>
+    <button
+      class="ghost-button rail-toggle ${isRailCollapsed ? "is-collapsed" : ""}"
+      type="button"
+      data-role="rail-toggle"
+      aria-label="${isRailCollapsed ? "展开侧边栏" : "收起侧边栏"}"
+      aria-expanded="${String(!isRailCollapsed)}"
+      aria-controls="siteRail"
+    >
+      ${isRailCollapsed ? "展开" : "收起"}
+    </button>
   `;
 }
 
@@ -548,13 +553,24 @@ function renderChapterPage(chapter) {
 
 function renderApp(route = getCurrentRoute()) {
   appRoot.innerHTML = html`
-    ${isRailCollapsed ? renderLayoutControls() : ""}
     <div class="site-layout ${route.view === "chapter" ? "is-chapter-view" : "is-home-view"} ${isRailCollapsed ? "is-rail-collapsed" : ""}">
-      <aside class="site-rail" id="siteRail">
-        ${!isRailCollapsed ? renderLayoutControls() : ""}
-        ${renderPrimaryNav(route)}
-        ${renderStudyHints()}
-      </aside>
+      ${
+        isRailCollapsed
+          ? html`
+              <div class="site-rail-peek">
+                ${renderRailToggle()}
+              </div>
+            `
+          : html`
+              <aside class="site-rail" id="siteRail">
+                <div class="site-rail__controls">
+                  ${renderRailToggle()}
+                </div>
+                ${renderPrimaryNav(route)}
+                ${renderStudyHints()}
+              </aside>
+            `
+      }
       <section class="site-content">
         ${route.view === "chapter" ? renderChapterPage(route.chapter) : renderHomePage()}
       </section>
