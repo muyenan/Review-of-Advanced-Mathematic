@@ -76,6 +76,21 @@ const quizUiCopy = {
   toggleToEn: { en: "Switch to English", zh: "切换为英文" },
 };
 
+const quizFeedbackCopy = {
+  correct: {
+    en: "Correct. Before moving on, explain why the other options fail.",
+    zh: "答对了。继续前，试着说清楚其他选项为什么不成立。",
+  },
+  wrong: {
+    en: "Review this one. Compare your choice with the condition named in the hint.",
+    zh: "这题需要回看。把你的选项和提示里的适用条件对照一下。",
+  },
+  revealed: {
+    en: "Answer revealed. Try to restate the reason before continuing.",
+    zh: "答案已显示。继续前，先用自己的话复述理由。",
+  },
+};
+
 function stripMarkup(text) {
   return String(text)
     .replace(/<[^>]+>/g, " ")
@@ -157,6 +172,17 @@ function getQuizUiText(key, lang) {
   return quizUiCopy[key]?.[lang] || quizUiCopy[key]?.en || "";
 }
 
+function getQuizFeedbackText(state, lang) {
+  return quizFeedbackCopy[state]?.[lang] || quizFeedbackCopy[state]?.en || "";
+}
+
+function getQuizProgressText(total, answered, correct, lang = "en") {
+  if (lang === "zh") {
+    return `已完成 ${answered}/${total}，正确 ${correct}`;
+  }
+  return `${answered}/${total} checked · ${correct} correct`;
+}
+
 function translateGeneratedQuizQuestion(text) {
   const coreMatch = text.match(/^For "(.+)", which statement best matches the core idea\?$/);
   if (coreMatch) {
@@ -221,6 +247,10 @@ function dedupeTexts(values) {
 
 function firstMeaningfulText(values = []) {
   return values.map(cleanQuizText).find(Boolean) || "";
+}
+
+function firstRichText(values = []) {
+  return values.find((value) => cleanQuizText(value)) || "";
 }
 
 function getTopicCoreIdea(topic) {
@@ -727,6 +757,38 @@ function renderQuizLanguageIcon(lang = "en") {
   `;
 }
 
+function getTopicFormulaCue(topic) {
+  if (!topic.formulas?.length) return "先回到定义，再判断题目属于哪类对象。";
+  const formula = topic.formulas[0];
+  const label = cleanQuizText(formula.label || "");
+  const body = formula.body || "";
+  if (label && body) return `${label}：${body}`;
+  return label || body || "先回到定义，再判断题目属于哪类对象。";
+}
+
+function renderTopicStudyCues(topic) {
+  const cues = [
+    { label: "核心", text: firstRichText([topic.focus, topic.mustKnow?.[0]]) },
+    { label: "公式", text: getTopicFormulaCue(topic) },
+    { label: "易错", text: firstRichText(topic.pitfalls) },
+  ];
+
+  return html`
+    <div class="topic-study-cues" aria-label="${topic.titleCn} 复习抓手">
+      ${cues
+        .map(
+          (cue) => html`
+            <div class="topic-study-cue">
+              <span>${cue.label}</span>
+              <p>${formatRichText(cue.text)}</p>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderFormulaWall(chapter) {
   return html`
     <section class="doc-section" id="${chapter.id}-formulas">
@@ -756,14 +818,19 @@ function renderTopicQuizzes(topic, topicAnchor) {
   if (!topic.quizzes?.length) return "";
 
   return html`
-    <section class="topic-block" id="${topicAnchor}-quiz">
-      <h3>${getQuizUiText("quickCheck", "en")}</h3>
+    <section class="topic-block quiz-block" id="${topicAnchor}-quiz">
+      <div class="quiz-section-head">
+        <h3>${getQuizUiText("quickCheck", "en")}</h3>
+        <span class="quiz-progress" data-role="quiz-progress" data-total="${topic.quizzes.length}">
+          ${getQuizProgressText(topic.quizzes.length, 0, 0)}
+        </span>
+      </div>
       <div class="quiz-stack">
         ${topic.quizzes
           .map((quiz, index) => {
             const answerLabel = String.fromCharCode(65 + quiz.correctIndex);
             return html`
-              <article class="quiz-card" data-lang="en">
+              <article class="quiz-card" data-lang="en" data-correct-index="${quiz.correctIndex}" data-answer-label="${answerLabel}" data-answered="false">
                 <div class="quiz-card__head">
                   <div class="quiz-card__meta">
                     <span class="quiz-order">Q${index + 1}</span>
@@ -792,17 +859,26 @@ function renderTopicQuizzes(topic, topicAnchor) {
                     .map(
                       (choice, choiceIndex) => html`
                         <li>
-                          <span class="quiz-choice-key">${String.fromCharCode(65 + choiceIndex)}.</span>
-                          <span
-                            class="quiz-choice-text"
-                            data-en="${escapeDataValue(choice.en)}"
-                            data-zh="${escapeDataValue(choice.zh)}"
-                          >${formatPlainMathText(choice.en)}</span>
+                          <button
+                            class="quiz-choice-button"
+                            type="button"
+                            data-role="select-quiz-choice"
+                            data-index="${choiceIndex}"
+                            aria-pressed="false"
+                          >
+                            <span class="quiz-choice-key">${String.fromCharCode(65 + choiceIndex)}.</span>
+                            <span
+                              class="quiz-choice-text"
+                              data-en="${escapeDataValue(choice.en)}"
+                              data-zh="${escapeDataValue(choice.zh)}"
+                            >${formatPlainMathText(choice.en)}</span>
+                          </button>
                         </li>
                       `
                     )
                     .join("")}
                 </ul>
+                <p class="quiz-feedback" data-role="quiz-feedback" hidden></p>
                 <div class="quiz-actions">
                   <button class="ghost-button" type="button" data-role="toggle-quiz-answer">${getQuizUiText("showAnswer", "en")}</button>
                 </div>
@@ -847,6 +923,7 @@ function renderTopicArticle(topic, chapterId) {
         </div>
       </header>
       <p class="topic-focus">${formatRichText(topic.focus)}</p>
+      ${renderTopicStudyCues(topic)}
       <div class="topic-article__grid">
         <section class="topic-block" id="${topicAnchor}-must-know">
           <h3>必须理解</h3>
@@ -1063,6 +1140,85 @@ function updateQuizAnswerButton(button, lang, isRevealed) {
   button.textContent = getQuizUiText(isRevealed ? "hideAnswer" : "showAnswer", lang);
 }
 
+function getSelectedQuizIndex(card) {
+  const value = card?.dataset.selectedIndex;
+  if (value === undefined || value === "") return -1;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : -1;
+}
+
+function setQuizFeedback(card, state) {
+  const feedback = card?.querySelector("[data-role='quiz-feedback']");
+  if (!feedback) return;
+
+  if (!state) {
+    feedback.setAttribute("hidden", "");
+    feedback.textContent = "";
+    return;
+  }
+
+  feedback.removeAttribute("hidden");
+  feedback.dataset.state = state;
+  feedback.textContent = getQuizFeedbackText(state, card.dataset.lang || "en");
+}
+
+function updateQuizChoiceState(card) {
+  if (!card) return;
+  const answered = card.dataset.answered === "true";
+  const correctIndex = Number(card.dataset.correctIndex);
+  const selectedIndex = getSelectedQuizIndex(card);
+  const hasSelected = selectedIndex >= 0;
+
+  card.querySelectorAll("[data-role='select-quiz-choice']").forEach((button) => {
+    const index = Number(button.dataset.index);
+    const isSelected = index === selectedIndex;
+    const isCorrect = answered && hasSelected && index === correctIndex;
+    const isWrong = answered && isSelected && index !== correctIndex;
+
+    button.classList.toggle("is-selected", isSelected);
+    button.classList.toggle("is-correct", isCorrect);
+    button.classList.toggle("is-wrong", isWrong);
+    button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+  });
+}
+
+function refreshQuizProgress(section) {
+  if (!section) return;
+  const cards = [...section.querySelectorAll(".quiz-card")];
+  const progress = section.querySelector("[data-role='quiz-progress']");
+  if (!progress || !cards.length) return;
+
+  const answered = cards.filter((card) => card.dataset.answered === "true").length;
+  const correct = cards.filter((card) => card.classList.contains("is-correct-result")).length;
+  const lang = cards.find((card) => card.dataset.lang === "zh") ? "zh" : "en";
+  progress.textContent = getQuizProgressText(cards.length, answered, correct, lang);
+}
+
+function markQuizAnswered(card, selectedIndex = -1, feedbackState = "revealed") {
+  if (!card) return;
+  const answer = card.querySelector(".quiz-answer");
+  const correctIndex = Number(card.dataset.correctIndex);
+  const hasSelected = selectedIndex >= 0;
+  const isCorrect = hasSelected && selectedIndex === correctIndex;
+  const state = hasSelected ? (isCorrect ? "correct" : "wrong") : feedbackState;
+
+  card.dataset.answered = hasSelected ? "true" : "false";
+  card.dataset.selectedIndex = hasSelected ? String(selectedIndex) : "";
+  card.dataset.feedbackState = state;
+  card.classList.toggle("is-correct-result", isCorrect);
+  card.classList.toggle("is-wrong-result", hasSelected && !isCorrect);
+  card.classList.toggle("is-revealed", true);
+
+  if (answer) {
+    answer.removeAttribute("hidden");
+  }
+
+  setQuizFeedback(card, state);
+  updateQuizChoiceState(card);
+  updateQuizAnswerButton(card.querySelector("[data-role='toggle-quiz-answer']"), card.dataset.lang || "en", true);
+  refreshQuizProgress(card.closest(".quiz-block"));
+}
+
 function applyQuizCardLanguage(card, lang) {
   if (!card) return;
   card.dataset.lang = lang;
@@ -1097,11 +1253,14 @@ function applyQuizCardLanguage(card, lang) {
 
   const answer = card.querySelector(".quiz-answer");
   updateQuizAnswerButton(card.querySelector("[data-role='toggle-quiz-answer']"), lang, answer ? !answer.hasAttribute("hidden") : false);
+  setQuizFeedback(card, card.dataset.feedbackState || "");
+  refreshQuizProgress(card.closest(".quiz-block"));
 }
 
 function bindQuizCards() {
   document.querySelectorAll(".quiz-card").forEach((card) => {
     applyQuizCardLanguage(card, card.dataset.lang || "en");
+    updateQuizChoiceState(card);
   });
 
   document.querySelectorAll("[data-role='toggle-quiz-lang']").forEach((button) => {
@@ -1113,6 +1272,15 @@ function bindQuizCards() {
     });
   });
 
+  document.querySelectorAll("[data-role='select-quiz-choice']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest(".quiz-card");
+      const selectedIndex = Number(button.dataset.index);
+      if (!card || !Number.isInteger(selectedIndex)) return;
+      markQuizAnswered(card, selectedIndex);
+    });
+  });
+
   document.querySelectorAll("[data-role='toggle-quiz-answer']").forEach((button) => {
     button.addEventListener("click", () => {
       const card = button.closest(".quiz-card");
@@ -1120,6 +1288,10 @@ function bindQuizCards() {
       if (!card || !answer) return;
       const willShow = answer.hasAttribute("hidden");
       if (willShow) {
+        if (card.dataset.answered !== "true") {
+          markQuizAnswered(card, -1, "revealed");
+          return;
+        }
         answer.removeAttribute("hidden");
       } else {
         answer.setAttribute("hidden", "");
@@ -1128,6 +1300,8 @@ function bindQuizCards() {
       updateQuizAnswerButton(button, card.dataset.lang || "en", willShow);
     });
   });
+
+  document.querySelectorAll(".quiz-block").forEach(refreshQuizProgress);
 }
 
 function bindTocToggles() {
@@ -1153,6 +1327,10 @@ function bindTocToggles() {
       }
     });
   });
+}
+
+function canAutoScrollSideNavigation() {
+  return window.matchMedia?.("(min-width: 1221px)").matches ?? true;
 }
 
 function bindScrollSpy(route) {
@@ -1184,6 +1362,7 @@ function bindScrollSpy(route) {
 
   const updateActiveState = () => {
     frameId = 0;
+    const shouldSyncSidebars = canAutoScrollSideNavigation();
 
     let activeId = sections[0].id;
     for (const section of sections) {
@@ -1217,14 +1396,14 @@ function bindScrollSpy(route) {
       group.querySelector(".toc-toggle")?.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
     });
 
-    if (activeTopicId && activeTopicId !== lastTopicId) {
+    if (shouldSyncSidebars && activeTopicId && activeTopicId !== lastTopicId) {
       document.querySelector(`.nav-topic-link[data-target="${activeTopicId}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
       lastTopicId = activeTopicId;
     } else if (!activeTopicId) {
       lastTopicId = "";
     }
 
-    if (activeTocId !== lastTocId || activeChildId !== lastChildId) {
+    if (shouldSyncSidebars && (activeTocId !== lastTocId || activeChildId !== lastChildId)) {
       const selector = activeChildId
         ? `.toc-sublink[data-target="${activeChildId}"]`
         : `.toc-link[data-target="${activeTocId}"]`;
@@ -1254,10 +1433,14 @@ function bindScrollSpy(route) {
 }
 
 function focusTopicFromRoute(route) {
-  if (!route.topicAnchor) return;
-  const target = document.getElementById(route.topicAnchor);
-  if (!target) return;
   requestAnimationFrame(() => {
+    if (!route.topicAnchor) {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      return;
+    }
+
+    const target = document.getElementById(route.topicAnchor);
+    if (!target) return;
     target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
   });
 }
