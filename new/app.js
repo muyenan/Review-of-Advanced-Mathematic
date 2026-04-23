@@ -1,6 +1,8 @@
 const appRoot = document.getElementById("app");
 const reviewData = globalThis.reviewData;
 const siteMeta = globalThis.siteMeta;
+const curatedTopicQuizzes = globalThis.curatedTopicQuizzes || {};
+const quizI18n = globalThis.quizI18n || {};
 
 const html = String.raw;
 
@@ -9,17 +11,83 @@ const totalFormulas = reviewData.reduce((sum, chapter) => sum + chapter.formulaW
 const totalDemos = reviewData.reduce((sum, chapter) => sum + chapter.demos.length, 0);
 let releaseScrollSpy = null;
 const tocGroupState = new Set();
+const topicTitleMap = new Map(reviewData.flatMap((chapter) => chapter.sections.map((topic) => [topic.titleEn, topic.titleCn])));
+const topicQuizBlueprints = {
+  "10.1": {
+    core: "Study the limit of a sequence and use monotone-bounded reasoning when needed.",
+    formula: "A convergent sequence must approach a finite limit as n tends to infinity.",
+    workflow: "First identify the candidate limit or the monotone-bounded pattern.",
+  },
+  "10.2": {
+    core: "View a series through its partial sums and always check whether a_n tends to zero.",
+    formula: "If Σa_n converges, then a_n must tend to zero.",
+    workflow: "Start from partial sums and apply the divergence test before deeper tests.",
+  },
+  "10.3": {
+    core: "Use the integral test only for positive decreasing terms that come from a continuous model.",
+    formula: "Σa_n and ∫f(x)dx have the same convergence behavior when a_n = f(n) and f is positive, continuous, and decreasing.",
+    workflow: "Verify positivity and monotone decrease before comparing with the improper integral.",
+  },
+  "10.4": {
+    core: "Choose a benchmark positive series with matching tail behavior and compare against it.",
+    formula: "Direct comparison and limit comparison usually reduce the series to a geometric series or a p-series.",
+    workflow: "Pick a benchmark first, then decide whether you need an upper or lower comparison.",
+  },
+  "10.5": {
+    core: "Separate absolute convergence from conditional behavior and use ratio or root tests on factorial or exponential patterns.",
+    formula: "Use lim |a_(n+1)/a_n| or limsup |a_n|^(1/n) to test absolute convergence.",
+    workflow: "Check whether a ratio or nth-root structure dominates the tail of the term.",
+  },
+  "10.6": {
+    core: "For alternating series, check sign alternation, monotone decrease, and the limit of the positive part.",
+    formula: "Leibniz test: if b_n decreases to zero, then Σ(-1)^(n-1)b_n converges.",
+    workflow: "Test absolute convergence first and only then decide whether the convergence is conditional.",
+  },
+  "10.7": {
+    core: "A power series is controlled by its radius and interval of convergence.",
+    formula: "Find the radius R from the ratio or root test, then test both endpoints separately.",
+    workflow: "Compute the radius first and substitute the endpoints last.",
+  },
+  "10.8": {
+    core: "Taylor and Maclaurin series build a function from its derivatives at the center.",
+    formula: "The Taylor polynomial uses f^(k)(a)/k! times (x-a)^k as the kth term.",
+    workflow: "Differentiate several times and look for the coefficient pattern before writing the series.",
+  },
+  "10.9": {
+    core: "A Taylor series matches the original function only when the remainder tends to zero.",
+    formula: "Control R_n(x) and show that the remainder goes to zero on the interval you use.",
+    workflow: "Write the polynomial part first and estimate the remainder right after that.",
+  },
+  "10.10": {
+    core: "Use standard expansions to approximate functions and simplify limits, integrals, or local models.",
+    formula: "Binomial and Taylor expansions replace a hard function with a manageable power series.",
+    workflow: "Choose the expansion center and keep only the order required by the problem.",
+  },
+};
+
+const quizUiCopy = {
+  quickCheck: { en: "Quick Check", zh: "随堂题" },
+  multipleChoice: { en: "Multiple Choice", zh: "单选题" },
+  showAnswer: { en: "Show answer", zh: "显示答案" },
+  hideAnswer: { en: "Hide answer", zh: "收起答案" },
+  answerLabel: { en: "Answer:", zh: "答案：" },
+  hintLabel: { en: "Hint:", zh: "提示：" },
+  toggleToZh: { en: "Switch to Chinese", zh: "切换为中文" },
+  toggleToEn: { en: "Switch to English", zh: "切换为英文" },
+};
 
 function stripMarkup(text) {
   return String(text)
     .replace(/<[^>]+>/g, " ")
     .replace(/\\(sin|cos|ln)\b/g, "$1")
     .replace(/(Σ|∫|lim)_\{([^}]+)\}\^\{([^}]+)\}/g, "$1 $2 $3")
+    .replace(/(Σ|∫|lim)_([A-Za-z0-9()+\-\/]+)\^([A-Za-z0-9()+\-\/]+)/g, "$1 $2 $3")
     .replace(/(Σ|∫|lim)_\{([^}]+)\}/g, "$1 $2")
+    .replace(/(Σ|∫|lim)_([A-Za-z0-9()+\-\/]+)/g, "$1 $2")
     .replace(/([A-Za-zΑ-Ωα-ω∇ΔλμρRDTFfgurxyz])_\{([^}]+)\}/gu, "$1 $2")
     .replace(/([A-Za-zΑ-Ωα-ω∇ΔλμρRDTFfgurxyz])_([A-Za-z0-9α-ωΑ-Ωθ]+)/gu, "$1 $2")
     .replace(/\^\{([^}]+)\}/g, " $1 ")
-    .replace(/\^([A-Za-z0-9()+\-]+)/g, " $1 ")
+    .replace(/\^([A-Za-z0-9()+\-\/]+)/g, " $1 ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -31,20 +99,261 @@ function escapeAttrValue(text) {
     .replace(/</g, "&lt;");
 }
 
+function escapeDataValue(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function formatMathExpression(expr) {
   return String(expr)
     .replace(/\\(sin|cos|ln)\b/g, "$1")
     .replace(/(Σ|∫|lim)_\{([^}]+)\}\^\{([^}]+)\}/g, "$1<sub>$2</sub><sup>$3</sup>")
+    .replace(/(Σ|∫|lim)_([A-Za-z0-9()+\-\/]+)\^([A-Za-z0-9()+\-\/]+)/g, "$1<sub>$2</sub><sup>$3</sup>")
     .replace(/(Σ|∫|lim)_\{([^}]+)\}/g, "$1<sub>$2</sub>")
+    .replace(/(Σ|∫|lim)_([A-Za-z0-9()+\-\/]+)/g, "$1<sub>$2</sub>")
     .replace(/([A-Za-zΑ-Ωα-ω∇ΔλμρRDTFfgurxyz])_\{([^}]+)\}/gu, "$1<sub>$2</sub>")
     .replace(/([A-Za-zΑ-Ωα-ω∇ΔλμρRDTFfgurxyz])_([A-Za-z0-9α-ωΑ-Ωθ]+)/gu, "$1<sub>$2</sub>")
     .replace(/\^\{([^}]+)\}/g, "<sup>$1</sup>")
-    .replace(/\^([A-Za-z0-9()+\-]+)/g, "<sup>$1</sup>");
+    .replace(/\^([A-Za-z0-9()+\-\/]+)/g, "<sup>$1</sup>");
 }
 
 function formatRichText(content) {
   return String(content).replace(/<span class="math">([\s\S]*?)<\/span>/g, (_, expr) => `<span class="math">${formatMathExpression(expr)}</span>`);
 }
+
+function formatPlainMathText(content) {
+  return formatMathExpression(escapeHtml(content));
+}
+
+function cleanQuizText(text) {
+  return String(text)
+    .replace(/<\/?span[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[。；;:：]+$/g, "")
+    .trim();
+}
+
+function createBilingualCopy(en, zh = "") {
+  const normalizedEn = cleanQuizText(en);
+  const normalizedZh = cleanQuizText(zh || en);
+  return {
+    en: normalizedEn,
+    zh: normalizedZh || normalizedEn,
+  };
+}
+
+function getQuizUiText(key, lang) {
+  return quizUiCopy[key]?.[lang] || quizUiCopy[key]?.en || "";
+}
+
+function translateGeneratedQuizQuestion(text) {
+  const coreMatch = text.match(/^For "(.+)", which statement best matches the core idea\?$/);
+  if (coreMatch) {
+    const titleCn = topicTitleMap.get(coreMatch[1]) || coreMatch[1];
+    return `对于“${titleCn}”这一节，哪一项最符合它的核心思想？`;
+  }
+
+  const formulaMatch = text.match(/^Which of the following best represents a key formula or test in "(.+)"\?$/);
+  if (formulaMatch) {
+    const titleCn = topicTitleMap.get(formulaMatch[1]) || formulaMatch[1];
+    return `下面哪一项最能代表“${titleCn}”中的关键公式或判别方法？`;
+  }
+
+  const workflowMatch = text.match(/^When solving problems in "(.+)", what should you decide first\?$/);
+  if (workflowMatch) {
+    const titleCn = topicTitleMap.get(workflowMatch[1]) || workflowMatch[1];
+    return `在处理“${titleCn}”相关题目时，首先应该判断什么？`;
+  }
+
+  return "";
+}
+
+function translateGeneratedQuizHint(text) {
+  const focusMatch = text.match(/^Focus first on the object, conditions, and conclusion of (.+)\.$/);
+  if (focusMatch) {
+    const titleCn = topicTitleMap.get(focusMatch[1]) || focusMatch[1];
+    return `先抓住“${titleCn}”这一节研究的对象、条件和结论。`;
+  }
+
+  if (text === "Remember the formula name, the meaning of each symbol, and when the test applies.") {
+    return "先记住公式名称、符号含义，以及判别法适用的条件。";
+  }
+
+  if (text === "In this topic, the first classification step matters more than the last line of algebra.") {
+    return "这一节更关键的是第一步分类判断，而不是最后一行代数运算。";
+  }
+
+  return "";
+}
+
+function localizeQuizQuestion(text) {
+  return quizI18n.questions?.[text] || translateGeneratedQuizQuestion(text) || text;
+}
+
+function localizeQuizChoice(text) {
+  return quizI18n.choices?.[text] || text;
+}
+
+function localizeQuizHint(text) {
+  return quizI18n.hints?.[text] || translateGeneratedQuizHint(text) || text;
+}
+
+function dedupeTexts(values) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = cleanQuizText(value).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function firstMeaningfulText(values = []) {
+  return values.map(cleanQuizText).find(Boolean) || "";
+}
+
+function getTopicCoreIdea(topic) {
+  if (topicQuizBlueprints[topic.code]?.core) return topicQuizBlueprints[topic.code].core;
+  return firstMeaningfulText([topic.mustKnow?.[0], topic.focus]);
+}
+
+function getTopicFormulaLead(topic) {
+  if (topicQuizBlueprints[topic.code]?.formula) return topicQuizBlueprints[topic.code].formula;
+  if (!topic.formulas?.length) return "";
+  const item = topic.formulas[0];
+  const label = cleanQuizText(item.label || "");
+  const body = cleanQuizText(item.body || "");
+  if (label && body) return `${label}：${body}`;
+  return label || body;
+}
+
+function getTopicWorkflowLead(topic) {
+  if (topicQuizBlueprints[topic.code]?.workflow) return topicQuizBlueprints[topic.code].workflow;
+  return firstMeaningfulText(topic.workflow || []);
+}
+
+function getTopicDistractors(chapter, currentTopic, extractor) {
+  return dedupeTexts(
+    chapter.sections
+      .filter((topic) => topic.code !== currentTopic.code)
+      .map((topic) => extractor(topic))
+      .filter(Boolean)
+  );
+}
+
+function buildQuizChoices(correct, distractors, seed) {
+  const normalizedCorrect = cleanQuizText(correct);
+  const fallbackDistractors = [
+    "Apply the conclusion directly without checking the conditions.",
+    "Look only at the form and ignore variable relationships or range.",
+    "Skip the key definition and jump straight into computation.",
+    "Force a method from another topic onto this problem.",
+  ];
+  const fillers = dedupeTexts([...distractors, ...fallbackDistractors]).filter((item) => cleanQuizText(item).toLowerCase() !== normalizedCorrect.toLowerCase());
+  while (fillers.length < 3) {
+    fillers.push(`Return to the definition of ${normalizedCorrect} before deciding.`);
+  }
+  const correctIndex = ((seed % 4) + 4) % 4;
+  const choices = [];
+  let fillerIndex = 0;
+  for (let index = 0; index < 4; index += 1) {
+    if (index === correctIndex) {
+      choices.push(normalizedCorrect);
+    } else {
+      choices.push(fillers[fillerIndex]);
+      fillerIndex += 1;
+    }
+  }
+  return { choices, correctIndex };
+}
+
+function buildAutoQuiz(question, correct, distractors, hint, seed) {
+  const normalizedCorrect = cleanQuizText(correct);
+  if (!normalizedCorrect) return null;
+  const { choices, correctIndex } = buildQuizChoices(normalizedCorrect, distractors, seed);
+  return {
+    question: createBilingualCopy(question, localizeQuizQuestion(question)),
+    choices: choices.map((choice) => createBilingualCopy(choice, localizeQuizChoice(choice))),
+    correctIndex,
+    hint: createBilingualCopy(hint, localizeQuizHint(hint) || "先回到本节定义、条件和结论再判断。"),
+  };
+}
+
+function normalizeCuratedQuiz(quiz) {
+  const choices = (quiz.choices || []).map(cleanQuizText).filter(Boolean);
+  const correctIndex = Number.isInteger(quiz.correctIndex) ? quiz.correctIndex : Number(quiz.correct_index);
+  if (!cleanQuizText(quiz.question) || choices.length < 2 || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= choices.length) {
+    return null;
+  }
+  return {
+    question: createBilingualCopy(quiz.question, localizeQuizQuestion(quiz.question)),
+    choices: choices.map((choice) => createBilingualCopy(choice, localizeQuizChoice(choice))),
+    correctIndex,
+    hint: createBilingualCopy(quiz.hint, localizeQuizHint(quiz.hint) || "先回到本节定义、条件和结论再判断。"),
+  };
+}
+
+function buildFallbackTopicQuizzes(topic, chapter) {
+  const coreIdea = getTopicCoreIdea(topic);
+  const formulaLead = getTopicFormulaLead(topic) || coreIdea;
+  const workflowLead = getTopicWorkflowLead(topic) || coreIdea;
+  const ideaDistractors = getTopicDistractors(chapter, topic, getTopicCoreIdea);
+  const formulaDistractors = getTopicDistractors(chapter, topic, getTopicFormulaLead);
+  const workflowDistractors = getTopicDistractors(chapter, topic, getTopicWorkflowLead);
+
+  return [
+    buildAutoQuiz(
+      `For "${topic.titleEn}", which statement best matches the core idea?`,
+      coreIdea,
+      ideaDistractors,
+      `Focus first on the object, conditions, and conclusion of ${topic.titleEn}.`,
+      topic.code.length
+    ),
+    buildAutoQuiz(
+      `Which of the following best represents a key formula or test in "${topic.titleEn}"?`,
+      formulaLead,
+      formulaDistractors,
+      `Remember the formula name, the meaning of each symbol, and when the test applies.`,
+      topic.code.length + 1
+    ),
+    buildAutoQuiz(
+      `When solving problems in "${topic.titleEn}", what should you decide first?`,
+      workflowLead,
+      workflowDistractors,
+      `In this topic, the first classification step matters more than the last line of algebra.`,
+      topic.code.length + 2
+    ),
+  ].filter(Boolean);
+}
+
+function hydrateTopicQuizzes() {
+  reviewData.forEach((chapter) => {
+    chapter.sections.forEach((topic) => {
+      const curated = (curatedTopicQuizzes[topic.code] || []).map(normalizeCuratedQuiz).filter(Boolean);
+      const fallback = buildFallbackTopicQuizzes(topic, chapter);
+      const seenQuestions = new Set();
+      topic.quizzes = [...curated, ...fallback].filter((quiz) => {
+        const key = cleanQuizText(quiz.question?.en || "").toLowerCase();
+        if (!key || seenQuestions.has(key)) return false;
+        seenQuestions.add(key);
+        return true;
+      }).slice(0, 3);
+    });
+  });
+}
+
+hydrateTopicQuizzes();
 
 function getCurrentRoute() {
   const rawHash = decodeURIComponent(window.location.hash.replace(/^#/, "").trim());
@@ -98,6 +407,13 @@ function getTopicSearchText(topic) {
     ...topic.workflow,
     ...topic.pitfalls,
     ...topic.tags,
+    ...(topic.quizzes || []).flatMap((quiz) => [
+      quiz.question?.en,
+      quiz.question?.zh,
+      ...(quiz.choices || []).flatMap((choice) => [choice.en, choice.zh]),
+      quiz.hint?.en,
+      quiz.hint?.zh,
+    ]),
   ]
     .map(stripMarkup)
     .join(" ")
@@ -146,6 +462,7 @@ function getPageAnchors(chapter) {
         { id: `${getTopicAnchor(chapter.id, topic)}-formulas`, label: "关键公式" },
         { id: `${getTopicAnchor(chapter.id, topic)}-workflow`, label: "题路步骤" },
         { id: `${getTopicAnchor(chapter.id, topic)}-pitfalls`, label: "易错提醒" },
+        { id: `${getTopicAnchor(chapter.id, topic)}-quiz`, label: "Quick Check" },
       ],
     })),
     { id: `${chapter.id}-diagram`, label: "章节图解", kind: "section", children: [] },
@@ -395,6 +712,21 @@ function renderAccordionCaret() {
   `;
 }
 
+function renderQuizLanguageIcon(lang = "en") {
+  const indicatorX = lang === "zh" ? 4 : 28;
+  const leftFill = lang === "zh" ? "#1d1d1f" : "#84848c";
+  const rightFill = lang === "en" ? "#1d1d1f" : "#84848c";
+
+  return `
+    <svg class="lang-toggle-icon" viewBox="0 0 52 24" fill="none" aria-hidden="true">
+      <rect x="1" y="1" width="50" height="22" rx="11" fill="#f7f7f4" stroke="#d9d8d0" />
+      <rect x="${indicatorX}" y="4" width="20" height="16" rx="8" fill="white" stroke="#d9d8d0" />
+      <text x="14" y="15.2" text-anchor="middle" font-size="10.5" font-weight="700" fill="${leftFill}" font-family="SF Pro Text, PingFang SC, sans-serif">文</text>
+      <text x="38" y="15.2" text-anchor="middle" font-size="10.5" font-weight="700" fill="${rightFill}" font-family="SF Pro Text, PingFang SC, sans-serif">英</text>
+    </svg>
+  `;
+}
+
 function renderFormulaWall(chapter) {
   return html`
     <section class="doc-section" id="${chapter.id}-formulas">
@@ -414,6 +746,83 @@ function renderFormulaWall(chapter) {
               </article>
             `
           )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderTopicQuizzes(topic, topicAnchor) {
+  if (!topic.quizzes?.length) return "";
+
+  return html`
+    <section class="topic-block" id="${topicAnchor}-quiz">
+      <h3>${getQuizUiText("quickCheck", "en")}</h3>
+      <div class="quiz-stack">
+        ${topic.quizzes
+          .map((quiz, index) => {
+            const answerLabel = String.fromCharCode(65 + quiz.correctIndex);
+            return html`
+              <article class="quiz-card" data-lang="en">
+                <div class="quiz-card__head">
+                  <div class="quiz-card__meta">
+                    <span class="quiz-order">Q${index + 1}</span>
+                    <span class="quiz-kind">${getQuizUiText("multipleChoice", "en")}</span>
+                  </div>
+                </div>
+                <div class="quiz-card__prompt">
+                  <p
+                    class="quiz-question"
+                    data-en="${escapeDataValue(quiz.question.en)}"
+                    data-zh="${escapeDataValue(quiz.question.zh)}"
+                  >${formatPlainMathText(quiz.question.en)}</p>
+                  <button
+                    class="quiz-lang-toggle"
+                    type="button"
+                    data-role="toggle-quiz-lang"
+                    data-lang="en"
+                    aria-label="${escapeAttrValue(getQuizUiText("toggleToZh", "en"))}"
+                    title="${escapeAttrValue(getQuizUiText("toggleToZh", "en"))}"
+                  >
+                    ${renderQuizLanguageIcon("en")}
+                  </button>
+                </div>
+                <ul class="quiz-choices">
+                  ${quiz.choices
+                    .map(
+                      (choice, choiceIndex) => html`
+                        <li>
+                          <span class="quiz-choice-key">${String.fromCharCode(65 + choiceIndex)}.</span>
+                          <span
+                            class="quiz-choice-text"
+                            data-en="${escapeDataValue(choice.en)}"
+                            data-zh="${escapeDataValue(choice.zh)}"
+                          >${formatPlainMathText(choice.en)}</span>
+                        </li>
+                      `
+                    )
+                    .join("")}
+                </ul>
+                <div class="quiz-actions">
+                  <button class="ghost-button" type="button" data-role="toggle-quiz-answer">${getQuizUiText("showAnswer", "en")}</button>
+                </div>
+                <div class="quiz-answer" hidden>
+                  <p>
+                    <strong class="quiz-answer-label">${getQuizUiText("answerLabel", "en")}</strong>
+                    <span class="quiz-answer-value">${answerLabel}</span>
+                  </p>
+                  <p>
+                    <strong class="quiz-hint-label">${getQuizUiText("hintLabel", "en")}</strong>
+                    <span
+                      class="quiz-hint-value"
+                      data-en="${escapeDataValue(quiz.hint.en)}"
+                      data-zh="${escapeDataValue(quiz.hint.zh)}"
+                    >${formatPlainMathText(quiz.hint.en)}</span>
+                  </p>
+                </div>
+              </article>
+            `;
+          })
           .join("")}
       </div>
     </section>
@@ -472,6 +881,7 @@ function renderTopicArticle(topic, chapterId) {
             ${topic.pitfalls.map((item) => `<li>${formatRichText(item)}</li>`).join("")}
           </ul>
         </section>
+        ${renderTopicQuizzes(topic, topicAnchor)}
       </div>
     </article>
   `;
@@ -642,6 +1052,84 @@ function bindCopyLink() {
   });
 }
 
+function setQuizRichText(node, lang) {
+  if (!node) return;
+  const nextText = node.dataset?.[lang] || node.dataset?.en || node.textContent || "";
+  node.innerHTML = formatPlainMathText(nextText);
+}
+
+function updateQuizAnswerButton(button, lang, isRevealed) {
+  if (!button) return;
+  button.textContent = getQuizUiText(isRevealed ? "hideAnswer" : "showAnswer", lang);
+}
+
+function applyQuizCardLanguage(card, lang) {
+  if (!card) return;
+  card.dataset.lang = lang;
+
+  const langButton = card.querySelector("[data-role='toggle-quiz-lang']");
+  if (langButton) {
+    langButton.dataset.lang = lang;
+    langButton.innerHTML = renderQuizLanguageIcon(lang);
+    const nextToggleLabel = lang === "en" ? getQuizUiText("toggleToZh", "en") : getQuizUiText("toggleToEn", "zh");
+    langButton.setAttribute("aria-label", nextToggleLabel);
+    langButton.setAttribute("title", nextToggleLabel);
+  }
+
+  const kind = card.querySelector(".quiz-kind");
+  if (kind) {
+    kind.textContent = getQuizUiText("multipleChoice", lang);
+  }
+
+  setQuizRichText(card.querySelector(".quiz-question"), lang);
+  card.querySelectorAll(".quiz-choice-text").forEach((node) => setQuizRichText(node, lang));
+  setQuizRichText(card.querySelector(".quiz-hint-value"), lang);
+
+  const answerLabel = card.querySelector(".quiz-answer-label");
+  if (answerLabel) {
+    answerLabel.textContent = getQuizUiText("answerLabel", lang);
+  }
+
+  const hintLabel = card.querySelector(".quiz-hint-label");
+  if (hintLabel) {
+    hintLabel.textContent = getQuizUiText("hintLabel", lang);
+  }
+
+  const answer = card.querySelector(".quiz-answer");
+  updateQuizAnswerButton(card.querySelector("[data-role='toggle-quiz-answer']"), lang, answer ? !answer.hasAttribute("hidden") : false);
+}
+
+function bindQuizCards() {
+  document.querySelectorAll(".quiz-card").forEach((card) => {
+    applyQuizCardLanguage(card, card.dataset.lang || "en");
+  });
+
+  document.querySelectorAll("[data-role='toggle-quiz-lang']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest(".quiz-card");
+      if (!card) return;
+      const nextLang = (card.dataset.lang || "en") === "en" ? "zh" : "en";
+      applyQuizCardLanguage(card, nextLang);
+    });
+  });
+
+  document.querySelectorAll("[data-role='toggle-quiz-answer']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest(".quiz-card");
+      const answer = card?.querySelector(".quiz-answer");
+      if (!card || !answer) return;
+      const willShow = answer.hasAttribute("hidden");
+      if (willShow) {
+        answer.removeAttribute("hidden");
+      } else {
+        answer.setAttribute("hidden", "");
+      }
+      card.classList.toggle("is-revealed", willShow);
+      updateQuizAnswerButton(button, card.dataset.lang || "en", willShow);
+    });
+  });
+}
+
 function bindTocToggles() {
   document.querySelectorAll(".toc-toggle[data-group]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -798,6 +1286,7 @@ function initializePage() {
   const route = renderApp();
   bindSearch(route);
   bindCopyLink();
+  bindQuizCards();
   bindTocToggles();
   bindScrollSpy(route);
   initDemos();
